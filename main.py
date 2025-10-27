@@ -50,6 +50,24 @@ def daily_bonus():
 threading.Thread(target=daily_bonus, daemon=True).start()
 
 # 🏠 /start
+def main_menu(user_id):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    btn1 = types.KeyboardButton("🎥 Видео")
+    btn2 = types.KeyboardButton("👥 Реферал алу")
+    btn_channel = types.KeyboardButton("📢 Каналымызға қосылу")
+    btn_channel_get = types.KeyboardButton("🛍 Канал алу")
+    if user_id == ADMIN_ID:
+        btn3 = types.KeyboardButton("📊 Статистика")
+        btn4 = types.KeyboardButton("🗑 Видеоларды өшіру")
+        btn5 = types.KeyboardButton("📩 Рассылка")
+        markup.add(btn1, btn2)
+        markup.add(btn_channel, btn_channel_get)
+        markup.add(btn3, btn4, btn5)
+    else:
+        markup.add(btn1, btn2)
+        markup.add(btn_channel, btn_channel_get)
+    return markup
+
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = message.from_user.id
@@ -71,29 +89,13 @@ def start(message):
                 conn.commit()
                 bot.send_message(int(ref_id), f"🎁 Сіз жаңа қолданушы шақырдыңыз! +5 бонус ✅")
 
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    btn1 = types.KeyboardButton("🎥 Видео")
-    btn2 = types.KeyboardButton("👥 Реферал алу")
-    btn_channel = types.KeyboardButton("📢 Каналымызға қосылу")
-    btn_channel_get = types.KeyboardButton("🛍 Канал алу")
-    if user_id == ADMIN_ID:
-        btn3 = types.KeyboardButton("📊 Статистика")
-        btn4 = types.KeyboardButton("🗑 Видеоларды өшіру")
-        btn5 = types.KeyboardButton("📩 Рассылка")
-        markup.add(btn1, btn2)
-        markup.add(btn_channel, btn_channel_get)
-        markup.add(btn3, btn4, btn5)
-    else:
-        markup.add(btn1, btn2)
-        markup.add(btn_channel, btn_channel_get)
-
     bot.send_message(user_id,
                      "Сәлем 👋\nБұл бот арқылы видеоларды көріп бонус аласың!\n"
                      "🎥 Әр видео = 1 бонус\nКүн сайын 5 бонус автоматты түрде беріледі 🎁",
-                     reply_markup=markup)
+                     reply_markup=main_menu(user_id))
 
 # 🎥 Видео
-@bot.message_handler(func=lambda m: m.text == "🎥 Видео")
+@bot.message_handler(func=lambda m: m.text and "Видео" in m.text)
 def video_watch(message):
     user_id = message.from_user.id
     user = cursor.execute("SELECT bonus, progress FROM users WHERE user_id = ?", (user_id,)).fetchone()
@@ -103,13 +105,16 @@ def video_watch(message):
 
     bonus, progress = user
     videos = cursor.execute("SELECT file_id FROM videos").fetchall()
+    if not videos:
+        bot.send_message(user_id, "🎬 Видеолар жоқ. Админге хабарласыңыз.")
+        return
+
     if bonus <= 0:
         bot.send_message(user_id, "❌ Бонус біткен. Адам шақырыңыз немесе 24 сағат күтіңіз.")
         return
+
     if progress >= len(videos):
-        cursor.execute("UPDATE users SET progress = 0 WHERE user_id = ?", (user_id,))
-        conn.commit()
-        progress = 0
+        progress = 0  # Соңына жетсе қайтадан басынан
 
     video_id = videos[progress][0]
     bot.send_video(user_id, video_id)
@@ -119,14 +124,14 @@ def video_watch(message):
     bot.send_message(user_id, f"✅ Видео көрсетілді!\nҚалған бонус: {bonus - 1} 🎁")
 
 # 👥 Реферал алу
-@bot.message_handler(func=lambda m: m.text == "👥 Реферал алу")
+@bot.message_handler(func=lambda m: m.text and "Реферал" in m.text)
 def referral(message):
     user_id = message.from_user.id
     ref_link = f"https://t.me/Sallemkz_bot?start={user_id}"
     bot.send_message(user_id, f"🔗 Сіздің сілтемеңіз:\n{ref_link}\n\nӘр шақырған адам үшін +5 бонус 🎁")
 
 # 📢 Каналымызға қосылу
-@bot.message_handler(func=lambda m: m.text == "📢 Каналымызға қосылу")
+@bot.message_handler(func=lambda m: m.text and "Каналымызға қосылу" in m.text)
 def channel_join(message):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add(types.KeyboardButton("🔙 Басты мәзірге оралу"))
@@ -134,36 +139,36 @@ def channel_join(message):
                      "1️⃣ https://t.me/Qazhuboyndar\n"
                      "2️⃣ https://t.me/+XRoxE_8bUM1mMmIy", reply_markup=markup)
 
-@bot.message_handler(func=lambda m: m.text == "🔙 Басты мәзірге оралу")
+@bot.message_handler(func=lambda m: m.text and "Басты мәзірге оралу" in m.text)
 def back_to_main(message):
     start(message)
 
 # 🛍 Канал алу
-@bot.message_handler(func=lambda m: m.text == "🛍 Канал алу")
+@bot.message_handler(func=lambda m: m.text and "Канал алу" in m.text)
 def get_channel(message):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add(types.KeyboardButton("🔙 Артқа"))
     bot.send_message(message.chat.id, "Канал алғыңыз келсе жазыңыз ❤️\n@KazHubALU ✨️", reply_markup=markup)
 
-@bot.message_handler(func=lambda m: m.text == "🔙 Артқа")
+@bot.message_handler(func=lambda m: m.text and "Артқа" in m.text)
 def back_channel(message):
     start(message)
 
 # 📊 Статистика (админ)
-@bot.message_handler(func=lambda m: m.text == "📊 Статистика" and m.from_user.id == ADMIN_ID)
+@bot.message_handler(func=lambda m: m.text and "Статистика" in m.text and m.from_user.id == ADMIN_ID)
 def stats(message):
     total = cursor.execute("SELECT COUNT(*) FROM users").fetchone()[0]
     total_videos = cursor.execute("SELECT COUNT(*) FROM videos").fetchone()[0]
     bot.send_message(message.chat.id, f"👥 Қолданушылар: {total}\n🎥 Видеолар саны: {total_videos}")
 
 # 🗑 Видеоларды өшіру
-@bot.message_handler(func=lambda m: m.text == "🗑 Видеоларды өшіру" and m.from_user.id == ADMIN_ID)
+@bot.message_handler(func=lambda m: m.text and "Видеоларды өшіру" in m.text and m.from_user.id == ADMIN_ID)
 def confirm_delete(message):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add(types.KeyboardButton("✅ Иә, өшір"), types.KeyboardButton("❎ Жоқ"))
     bot.send_message(message.chat.id, "Сіз видеоларды өшіргіңіз келе ме?", reply_markup=markup)
 
-@bot.message_handler(func=lambda m: m.text == "✅ Иә, өшір" and m.from_user.id == ADMIN_ID)
+@bot.message_handler(func=lambda m: m.text and "Иә, өшір" in m.text and m.from_user.id == ADMIN_ID)
 def delete_videos(message):
     cursor.execute("DELETE FROM videos")
     cursor.execute("UPDATE users SET progress = 0")
@@ -171,7 +176,7 @@ def delete_videos(message):
     bot.send_message(message.chat.id, "✅ Барлық видеолар өшірілді!")
     start(message)
 
-@bot.message_handler(func=lambda m: m.text == "❎ Жоқ" and m.from_user.id == ADMIN_ID)
+@bot.message_handler(func=lambda m: m.text and "Жоқ" in m.text and m.from_user.id == ADMIN_ID)
 def cancel_delete(message):
     bot.send_message(message.chat.id, "❎ Видеолар сақталды, ештеңе өшірілмеді.")
     start(message)
@@ -179,7 +184,7 @@ def cancel_delete(message):
 # 📩 Админ рассылка
 admin_broadcast = {}
 
-@bot.message_handler(func=lambda m: m.text == "📩 Рассылка" and m.from_user.id == ADMIN_ID)
+@bot.message_handler(func=lambda m: m.text and "Рассылка" in m.text and m.from_user.id == ADMIN_ID)
 def start_broadcast(message):
     bot.send_message(message.chat.id, "✏️ Қандай хабарлама жібергіңіз келеді?")
     admin_broadcast[message.chat.id] = "WAITING_TEXT"
@@ -191,7 +196,7 @@ def get_broadcast_text(message):
     markup.add(types.KeyboardButton("✅ Ия"), types.KeyboardButton("❎ Жоқ"))
     bot.send_message(message.chat.id, f"Хабарламаны жіберейін бе?\n\n{message.text}", reply_markup=markup)
 
-@bot.message_handler(func=lambda m: m.text in ["✅ Ия", "❎ Жоқ"] and m.from_user.id == ADMIN_ID)
+@bot.message_handler(func=lambda m: m.text and m.text in ["✅ Ия", "❎ Жоқ"] and m.from_user.id == ADMIN_ID)
 def confirm_broadcast(message):
     if message.text == "✅ Ия":
         text = admin_broadcast.get(message.chat.id)
