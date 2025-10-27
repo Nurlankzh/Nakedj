@@ -4,6 +4,7 @@ from flask import Flask, request
 import sqlite3
 import threading
 import time
+import os
 
 # 🔑 Бот мәліметтері
 BOT_TOKEN = "8419149602:AAHvLF3XmreCAQpvJy_8-RRJDH0g_qy9Oto"
@@ -24,9 +25,14 @@ cursor.execute("""CREATE TABLE IF NOT EXISTS users (
 )""")
 cursor.execute("""CREATE TABLE IF NOT EXISTS videos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    file_id TEXT
+    file_id TEXT,
+    file_name TEXT
 )""")
 conn.commit()
+
+# 📂 videos_files қалтасын жасау
+if not os.path.exists("videos_files"):
+    os.makedirs("videos_files")
 
 # 🔁 Күн сайын бонус қосу
 def daily_bonus():
@@ -65,20 +71,21 @@ def start(message):
                 conn.commit()
                 bot.send_message(int(ref_id), f"🎁 Сіз жаңа қолданушы шақырдыңыз! +5 бонус ✅")
 
-    # Мәзірді жасау
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     btn1 = types.KeyboardButton("🎥 Видео")
     btn2 = types.KeyboardButton("👥 Реферал алу")
-    btn3 = types.KeyboardButton("🌐 Каналға қосылу")
-    btn4 = types.KeyboardButton("📣 Канал алу")
+    btn_channel = types.KeyboardButton("📢 Каналымызға қосылу")
+    btn_channel_get = types.KeyboardButton("🛍 Канал алу")
     if user_id == ADMIN_ID:
-        btn5 = types.KeyboardButton("📊 Статистика")
-        btn6 = types.KeyboardButton("🗑 Видеоларды өшіру")
-        btn7 = types.KeyboardButton("📩 Рассылка")
-        markup.add(btn1, btn2, btn3, btn4)
-        markup.add(btn5, btn6, btn7)
+        btn3 = types.KeyboardButton("📊 Статистика")
+        btn4 = types.KeyboardButton("🗑 Видеоларды өшіру")
+        btn5 = types.KeyboardButton("📩 Рассылка")
+        markup.add(btn1, btn2)
+        markup.add(btn_channel, btn_channel_get)
+        markup.add(btn3, btn4, btn5)
     else:
-        markup.add(btn1, btn2, btn3, btn4)
+        markup.add(btn1, btn2)
+        markup.add(btn_channel, btn_channel_get)
 
     bot.send_message(user_id,
                      "Сәлем 👋\nБұл бот арқылы видеоларды көріп бонус аласың!\n"
@@ -96,16 +103,12 @@ def video_watch(message):
 
     bonus, progress = user
     videos = cursor.execute("SELECT file_id FROM videos").fetchall()
-    if not videos:
-        bot.send_message(user_id, "🎬 Қазір видео жоқ.")
-        return
-
     if bonus <= 0:
         bot.send_message(user_id, "❌ Бонус біткен. Адам шақырыңыз немесе 24 сағат күтіңіз.")
         return
-
-    # Егер progress соңғы видеодан асып кетсе, бастан көрсету
     if progress >= len(videos):
+        cursor.execute("UPDATE users SET progress = 0 WHERE user_id = ?", (user_id,))
+        conn.commit()
         progress = 0
 
     video_id = videos[progress][0]
@@ -122,31 +125,28 @@ def referral(message):
     ref_link = f"https://t.me/Sallemkz_bot?start={user_id}"
     bot.send_message(user_id, f"🔗 Сіздің сілтемеңіз:\n{ref_link}\n\nӘр шақырған адам үшін +5 бонус 🎁")
 
-# 🌐 Каналға қосылу
-@bot.message_handler(func=lambda m: m.text == "🌐 Каналға қосылу")
-def join_channel(message):
-    user_id = message.from_user.id
+# 📢 Каналымызға қосылу
+@bot.message_handler(func=lambda m: m.text == "📢 Каналымызға қосылу")
+def channel_join(message):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add(types.KeyboardButton("🔙 Басты мәзірге оралу"))
-    bot.send_message(user_id,
-                     "Каналға қосылыңыз:\n"
+    bot.send_message(message.chat.id, "Қосылғыңыз келетін каналдарды таңдаңыз:\n\n"
                      "1️⃣ https://t.me/Qazhuboyndar\n"
-                     "2️⃣ https://t.me/+XRoxE_8bUM1mMmIy",
-                     reply_markup=markup)
+                     "2️⃣ https://t.me/+XRoxE_8bUM1mMmIy", reply_markup=markup)
 
-# 📣 Канал алу
-@bot.message_handler(func=lambda m: m.text == "📣 Канал алу")
+@bot.message_handler(func=lambda m: m.text == "🔙 Басты мәзірге оралу")
+def back_to_main(message):
+    start(message)
+
+# 🛍 Канал алу
+@bot.message_handler(func=lambda m: m.text == "🛍 Канал алу")
 def get_channel(message):
-    user_id = message.from_user.id
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add(types.KeyboardButton("🔙 Артқа"))
-    bot.send_message(user_id,
-                     "Канал алғыңыз келсе жазыңыз ❤️\n@KazHubALU ✨️",
-                     reply_markup=markup)
+    bot.send_message(message.chat.id, "Канал алғыңыз келсе жазыңыз ❤️\n@KazHubALU ✨️", reply_markup=markup)
 
-# 🔙 Басты мәзірге оралу
-@bot.message_handler(func=lambda m: m.text in ["🔙 Артқа", "🔙 Басты мәзірге оралу"])
-def back(message):
+@bot.message_handler(func=lambda m: m.text == "🔙 Артқа")
+def back_channel(message):
     start(message)
 
 # 📊 Статистика (админ)
@@ -207,12 +207,20 @@ def confirm_broadcast(message):
     admin_broadcast.pop(message.chat.id, None)
     start(message)
 
-# 📩 Админ видео қосу
+# 📩 Админ видео қосу (файлға сақтау)
 @bot.message_handler(content_types=['video'])
 def add_video(message):
     if message.from_user.id != ADMIN_ID:
         return
-    cursor.execute("INSERT INTO videos (file_id) VALUES (?)", (message.video.file_id,))
+
+    file_info = bot.get_file(message.video.file_id)
+    downloaded_file = bot.download_file(file_info.file_path)
+    file_name = f"videos_files/{message.video.file_id}.mp4"
+    with open(file_name, 'wb') as f:
+        f.write(downloaded_file)
+
+    cursor.execute("INSERT INTO videos (file_id, file_name) VALUES (?, ?)",
+                   (message.video.file_id, file_name))
     conn.commit()
     total = cursor.execute("SELECT COUNT(*) FROM videos").fetchone()[0]
     bot.send_message(message.chat.id, f"✅ Видео сақталды! Барлығы: {total} 🎥")
