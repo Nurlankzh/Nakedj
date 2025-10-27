@@ -65,17 +65,20 @@ def start(message):
                 conn.commit()
                 bot.send_message(int(ref_id), f"🎁 Сіз жаңа қолданушы шақырдыңыз! +5 бонус ✅")
 
+    # 📝 Меню батырмалары
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     btn1 = types.KeyboardButton("🎥 Видео")
     btn2 = types.KeyboardButton("👥 Реферал алу")
+    btn3 = types.KeyboardButton("📢 Каналымызға қосылу")
+    btn4 = types.KeyboardButton("📦 Канал алу")
     if user_id == ADMIN_ID:
-        btn3 = types.KeyboardButton("📊 Статистика")
-        btn4 = types.KeyboardButton("🗑 Видеоларды өшіру")
-        btn5 = types.KeyboardButton("📩 Рассылка")
-        markup.add(btn1, btn2)
-        markup.add(btn3, btn4, btn5)
+        btn5 = types.KeyboardButton("📊 Статистика")
+        btn6 = types.KeyboardButton("🗑 Видеоларды өшіру")
+        btn7 = types.KeyboardButton("📩 Рассылка")
+        markup.add(btn1, btn2, btn3, btn4)
+        markup.add(btn5, btn6, btn7)
     else:
-        markup.add(btn1, btn2)
+        markup.add(btn1, btn2, btn3, btn4)
 
     bot.send_message(user_id,
                      "Сәлем 👋\nБұл бот арқылы видеоларды көріп бонус аласың!\n"
@@ -113,6 +116,37 @@ def referral(message):
     user_id = message.from_user.id
     ref_link = f"https://t.me/Sallemkz_bot?start={user_id}"
     bot.send_message(user_id, f"🔗 Сіздің сілтемеңіз:\n{ref_link}\n\nӘр шақырған адам үшін +5 бонус 🎁")
+
+# 📢 Каналымызға қосылу
+@bot.message_handler(func=lambda m: m.text == "📢 Каналымызға қосылу")
+def join_channel(message):
+    user_id = message.from_user.id
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add(types.KeyboardButton("🔙 Басты мәзірге оралу"))
+    bot.send_message(
+        user_id,
+        "🌟 Каналдарға қосылыңыз:\n\n"
+        "1️⃣ https://t.me/Qazhuboyndar\n"
+        "2️⃣ https://t.me/+XRoxE_8bUM1mMmIy",
+        reply_markup=markup
+    )
+
+# 📦 Канал алу
+@bot.message_handler(func=lambda m: m.text == "📦 Канал алу")
+def get_channel(message):
+    user_id = message.from_user.id
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add(types.KeyboardButton("🔙 Артқа"))
+    bot.send_message(
+        user_id,
+        "❤️ Канал алғыңыз келсе жазыңыз:\n@KazHubALU ✨️",
+        reply_markup=markup
+    )
+
+# 🔙 Басты мәзірге оралу / Артқа
+@bot.message_handler(func=lambda m: m.text in ["🔙 Басты мәзірге оралу", "🔙 Артқа"])
+def back_to_menu(message):
+    start(message)
 
 # 📊 Статистика (админ)
 @bot.message_handler(func=lambda m: m.text == "📊 Статистика" and m.from_user.id == ADMIN_ID)
