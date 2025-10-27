@@ -1,25 +1,26 @@
 import telebot
 from telebot import types
+from flask import Flask, request
 import sqlite3
 import threading
 import time
 
-# 🔑 Токен мен Админ ID
+# 🔑 Бот мәліметтері
 BOT_TOKEN = "8419149602:AAHvLF3XmreCAQpvJy_8-RRJDH0g_qy9Oto"
-ADMIN_ID = 6927494520  # Сенің ID
+ADMIN_ID = 6927494520
+WEBHOOK_URL = "https://nakedj-5.onrender.com"
 
 bot = telebot.TeleBot(BOT_TOKEN)
+app = Flask(__name__)
 
-# 📦 БАЗА (мәңгі сақталады)
+# 📦 Деректер базасы
 conn = sqlite3.connect("data.db", check_same_thread=False)
 cursor = conn.cursor()
-
 cursor.execute("""CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
     bonus INTEGER DEFAULT 5,
     progress INTEGER DEFAULT 0
 )""")
-
 cursor.execute("""CREATE TABLE IF NOT EXISTS videos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     file_id TEXT
@@ -38,7 +39,7 @@ def daily_bonus():
                 bot.send_message(user[0], "🎁 Сізге жаңа 5 бонус берілді!")
             except:
                 pass
-        time.sleep(86400)  # 24 сағат сайын
+        time.sleep(86400)
 
 
 threading.Thread(target=daily_bonus, daemon=True).start()
@@ -167,5 +168,20 @@ def add_video(message):
     bot.send_message(message.chat.id, f"✅ Видео сақталды! Барлығы: {cursor.execute('SELECT COUNT(*) FROM videos').fetchone()[0]} 🎥")
 
 
-# 🚀 Іске қосу
-bot.polling(none_stop=True)
+# 🌐 Flask Webhook бөлігі
+@app.route(f"/{BOT_TOKEN}", methods=['POST'])
+def webhook():
+    update = telebot.types.Update.de_json(request.stream.read().decode('utf-8'))
+    bot.process_new_updates([update])
+    return "ok", 200
+
+
+@app.route("/")
+def index():
+    bot.remove_webhook()
+    bot.set_webhook(url=f"{WEBHOOK_URL}/{BOT_TOKEN}")
+    return "Бот жұмыс істеп тұр ✅", 200
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000)
