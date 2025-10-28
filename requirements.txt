@@ -1,3 +1,4 @@
 Flask==2.3.3
 pyTelegramBotAPI==4.13.0
 gunicorn==21.2.0
+requests==2.32.5
