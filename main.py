@@ -3,29 +3,24 @@ import logging
 import sqlite3
 import threading
 from datetime import datetime
-from flask import Flask, request, jsonify
+from flask import Flask, request
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # ---------------------------
 # CONFIG / ENV
 # ---------------------------
-# If you want hard-coded fallback (not recommended) — it's here.
-# But prefer setting these via Render Environment (Settings -> Environment).
 BOT_TOKEN = os.getenv("BOT_TOKEN") or "8419149602:AAHvLF3XmreCAQpvJy_8-RRJDH0g_qy9Oto"
 ADMIN_ID = int(os.getenv("ADMIN_ID") or "6927494520")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL") or "https://nakedj-7-g6vy.onrender.com"  # set to your render URL
+WEBHOOK_URL = os.getenv("WEBHOOK_URL") or "https://nakedj-7-g6vy.onrender.com"
 VIDEO_DIR = os.getenv("VIDEO_DIR") or "videos"
 DB_FILE = os.getenv("DB_FILE") or "data.db"
 PORT = int(os.getenv("PORT") or 10000)
 
 # ---------------------------
-# Logging (debug)
+# Logging
 # ---------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 logger.info("Starting bot module...")
 
@@ -40,12 +35,13 @@ os.makedirs(VIDEO_DIR, exist_ok=True)
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
-# sqlite (thread-safe with a lock)
 conn = sqlite3.connect(DB_FILE, check_same_thread=False)
 cursor = conn.cursor()
 db_lock = threading.Lock()
 
-# Create tables if not exist
+# ---------------------------
+# Create tables
+# ---------------------------
 with db_lock:
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS users (
@@ -97,7 +93,6 @@ def get_main_inline(user_id: int):
     return kb
 
 def save_file_from_fileid(file_id: str, is_video=True) -> str:
-    """Download file from Telegram and save to disk; return path."""
     try:
         file_info = bot.get_file(file_id)
         b = bot.download_file(file_info.file_path)
@@ -122,7 +117,7 @@ def ensure_user(user_id:int, invited_by=None):
             conn.commit()
 
 # ---------------------------
-# Handlers: /start, text, media, callbacks
+# Handlers: /start
 # ---------------------------
 @bot.message_handler(commands=['start'])
 def cmd_start(message):
@@ -132,17 +127,15 @@ def cmd_start(message):
         args = message.text.split()
         ref = None
         if len(args) > 1:
-            # referral passed as numeric id or start=123 pattern
             a = args[1]
             if a.isdigit():
                 ref = int(a)
             elif a.startswith("start=") and a[6:].isdigit():
                 ref = int(a[6:])
         ensure_user(user_id, invited_by=ref)
-        # if referral exists and inviter is in DB, give inviter +12 once
+        # give inviter bonus once
         if ref and ref != user_id:
             with db_lock:
-                # only credit inviter if they exist
                 inv = cursor.execute("SELECT 1 FROM users WHERE user_id=?", (ref,)).fetchone()
                 if inv:
                     cursor.execute("UPDATE users SET balance = balance + 12 WHERE user_id=?", (ref,))
@@ -151,7 +144,6 @@ def cmd_start(message):
                         bot.send_message(ref, f"🎉 Сіз жаңа қолданушы шақырдыңыз! +12💸 берілді.")
                     except Exception:
                         logger.exception("Couldn't notify inviter")
-        # get balance
         with db_lock:
             bal = cursor.execute("SELECT balance FROM users WHERE user_id=?", (user_id,)).fetchone()[0]
         text = f"Сәлем 👋\nСізде қазір: {bal}💸\nТөмендегі батырмаларды таңдаңыз:"
@@ -160,25 +152,27 @@ def cmd_start(message):
     except Exception:
         logger.exception("cmd_start error")
 
+# ---------------------------
+# Text messages
+# ---------------------------
 @bot.message_handler(content_types=['text'])
 def handle_text(message):
-    logger.info(f"TEXT from {message.from_user.id}: {message.text}")
-    # simple help/responses
-    if message.text.lower().startswith("/admin") and message.from_user.id == ADMIN_ID:
-        # admin panel summary
+    user_id = message.from_user.id
+    if message.text.lower().startswith("/admin") and user_id == ADMIN_ID:
         with db_lock:
             users_count = cursor.execute("SELECT COUNT(*) FROM users").fetchone()[0]
             videos_count = cursor.execute("SELECT COUNT(*) FROM videos").fetchone()[0]
             pending_count = cursor.execute("SELECT COUNT(*) FROM pending").fetchone()[0]
         bot.send_message(ADMIN_ID, f"📊 Admin stats:\nUsers: {users_count}\nVideos: {videos_count}\nPending: {pending_count}")
         return
-    # otherwise show main inline
-    user_id = message.from_user.id
     ensure_user(user_id)
     with db_lock:
         bal = cursor.execute("SELECT balance FROM users WHERE user_id=?", (user_id,)).fetchone()[0]
     bot.send_message(user_id, f"Сіз жаздыңыз: {message.text}\nСізде: {bal}💸", reply_markup=get_main_inline(user_id))
 
+# ---------------------------
+# Media messages
+# ---------------------------
 @bot.message_handler(content_types=['video','photo','document'])
 def handle_media(message):
     user_id = message.from_user.id
@@ -200,7 +194,6 @@ def handle_media(message):
         logger.exception("handle_media error saving file")
         return
 
-    # admin direct add
     if user_id == ADMIN_ID:
         with db_lock:
             if is_video:
@@ -211,19 +204,17 @@ def handle_media(message):
                                (file_id, path, user_id, datetime.utcnow().isoformat()))
             conn.commit()
         bot.send_message(user_id, "✅ Файл қабылданды (admin).")
-        logger.info(f"Admin uploaded file and added to DB: {path}")
         return
 
-    # regular user -> pending moderation
+    # regular user -> pending
     with db_lock:
         cursor.execute("INSERT INTO pending (uploader_id, content_type, file_id, file_path, created_at) VALUES (?, ?, ?, ?, ?)",
                        (user_id, 'video' if is_video else 'photo', file_id, path, datetime.utcnow().isoformat()))
         pid = cursor.lastrowid
         conn.commit()
     bot.send_message(user_id, "✅ Файл модерацияға жіберілді. Админ мақұлдағаннан кейін хабарланады.")
-    logger.info(f"User {user_id} uploaded pending #{pid} -> {path}")
 
-    # Notify admin with approve/reject inline
+    # Notify admin
     kb = InlineKeyboardMarkup()
     kb.add(InlineKeyboardButton("Approve (+40/+30)", callback_data=f"approve_{pid}"))
     kb.add(InlineKeyboardButton("Reject", callback_data=f"reject_{pid}"))
@@ -236,28 +227,30 @@ def handle_media(message):
                 bot.send_photo(ADMIN_ID, f, caption=f"New pending photo #{pid} from {user_id}", reply_markup=kb)
     except Exception:
         bot.send_message(ADMIN_ID, f"New pending ({'video' if is_video else 'photo'}) #{pid} from {user_id}. Approve/Reject in chat.", reply_markup=kb)
-        logger.exception("Couldn't send pending preview to admin")
 
-# Callback handler for inline buttons
+# ---------------------------
+# Callback handler
+# ---------------------------
 @bot.callback_query_handler(func=lambda c: True)
 def handle_cb(call):
     data = call.data
     user_id = call.from_user.id
-    logger.info(f"Callback {data} from {user_id}")
+
     if data == "buy_channel":
         kb = InlineKeyboardMarkup()
         kb.add(InlineKeyboardButton("Басты мәзірге оралу", callback_data="back_main"))
         bot.edit_message_text("Канал сатып алғыңыз келсе жазыңыз @KazHubALU",
                               call.message.chat.id, call.message.message_id, reply_markup=kb)
         return
+
     if data == "channels":
         kb = InlineKeyboardMarkup()
         kb.add(InlineKeyboardButton("Басты мәзірге оралу", callback_data="back_main"))
         text = "Тіркеліңіз — барлық жаңалықтар осында:\n1) https://t.me/+XRoxE_8bUM1mMmIy\n2) https://t.me/bokseklub"
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=kb)
         return
+
     if data == "watch_video":
-        # simplified: check balance and send next approved video
         with db_lock:
             u = cursor.execute("SELECT balance, progress_video FROM users WHERE user_id=?", (user_id,)).fetchone()
             if not u:
@@ -269,9 +262,6 @@ def handle_cb(call):
                 bot.answer_callback_query(call.id, "🎬 Видеолар жоқ. Админге хабарласыңыз.")
                 return
             if user_id != ADMIN_ID and balance < 3:
-                if balance <= 0:
-                    bot.answer_callback_query(call.id, "Сіздің балансыңыз жетпейді. Дос шақырыңыз: " + f"https://t.me/{bot.get_me().username}?start={user_id}")
-                    return
                 bot.answer_callback_query(call.id, "Видео көру үшін 3💸 керек.")
                 return
             idx = progress if progress < len(rows) else 0
@@ -279,12 +269,11 @@ def handle_cb(call):
             file_id, file_path = row[1], row[2]
             try:
                 if file_path and os.path.exists(file_path):
-                    with open(file_path, "rb") as f: bot.send_video(user_id, f, caption=f"✅ Видео көрсетілді. Қалған: {(balance-3) if user_id!=ADMIN_ID else balance}💸")
+                    with open(file_path, "rb") as f: bot.send_video(user_id, f)
                 else:
-                    bot.send_video(user_id, file_id, caption=f"✅ Видео көрсетілді. Қалған: {(balance-3) if user_id!=ADMIN_ID else balance}💸")
+                    bot.send_video(user_id, file_id)
             except Exception:
                 bot.answer_callback_query(call.id, "Видео жібергенде қате.")
-                logger.exception("send video error")
                 return
             if user_id != ADMIN_ID:
                 cursor.execute("UPDATE users SET balance=?, progress_video=? WHERE user_id=?", (max(balance-3,0), idx+1, user_id))
@@ -293,6 +282,7 @@ def handle_cb(call):
             conn.commit()
             bot.answer_callback_query(call.id, "Видео алынды.")
         return
+
     if data == "upload_menu":
         kb = InlineKeyboardMarkup()
         kb.add(InlineKeyboardButton("Видео жіберу (админға жіберіледі)", callback_data="upload_video_hint"))
@@ -300,13 +290,13 @@ def handle_cb(call):
         kb.add(InlineKeyboardButton("Басты мәзірге оралу", callback_data="back_main"))
         bot.edit_message_text("Видео немесе фото жүктегіңіз келсе соны таңдаңыз. (Файлты осы чатқа жүктеңіз)", call.message.chat.id, call.message.message_id, reply_markup=kb)
         return
+
     if data.startswith("approve_") or data.startswith("reject_"):
-        # only admin
         if user_id != ADMIN_ID:
             bot.answer_callback_query(call.id, "Тек админ ғана.")
             return
         parts = data.split("_")
-        action = parts[0]  # approve or reject
+        action = parts[0]
         pid = int(parts[1])
         with db_lock:
             p = cursor.execute("SELECT uploader_id, content_type, file_id, file_path FROM pending WHERE id=?", (pid,)).fetchone()
@@ -319,39 +309,30 @@ def handle_cb(call):
                     cursor.execute("INSERT INTO videos (file_id, file_path, added_by, created_at) VALUES (?, ?, ?, ?)",
                                    (file_id, file_path, user_id, datetime.utcnow().isoformat()))
                     cursor.execute("UPDATE users SET balance = balance + 40 WHERE user_id=?", (uploader_id,))
-                    conn.commit()
-                    bot.send_message(uploader_id, "🎉 Сіздің видеоңыз мақұлданды! +40💸 қосылды. Рақмет!")
                 else:
                     cursor.execute("INSERT INTO photos (file_id, file_path, added_by, created_at) VALUES (?, ?, ?, ?)",
                                    (file_id, file_path, user_id, datetime.utcnow().isoformat()))
                     cursor.execute("UPDATE users SET balance = balance + 30 WHERE user_id=?", (uploader_id,))
-                    conn.commit()
-                    bot.send_message(uploader_id, "🎉 Сіздің фотоңыз мақұлданды! +30💸 қосылды. Рақмет!")
                 cursor.execute("DELETE FROM pending WHERE id=?", (pid,))
                 conn.commit()
-                bot.answer_callback_query(call.id, "Мақұлданды және авторға сыйақы берілді.")
-                try:
-                    bot.edit_message_text(f"Pending #{pid} — мақұлданды ✅", call.message.chat.id, call.message.message_id)
-                except: pass
+                bot.send_message(uploader_id, f"🎉 Сіздің {ctype} мақұлданды! Рақмет!")
+                bot.answer_callback_query(call.id, "Мақұлданды.")
             else:
                 cursor.execute("DELETE FROM pending WHERE id=?", (pid,))
                 conn.commit()
+                bot.send_message(uploader_id, f"❌ Сіздің файл модерацияда қабылданбады.")
                 bot.answer_callback_query(call.id, "Тасталды.")
-                bot.send_message(uploader_id, "❌ Сіздің файл модерацияда қабылданбады.")
-                try:
-                    bot.edit_message_text(f"Pending #{pid} — тасталды ❌", call.message.chat.id, call.message.message_id)
-                except: pass
         return
+
     if data == "back_main":
-        uid = call.from_user.id
         with db_lock:
-            ensure_user(uid)
-            bal = cursor.execute("SELECT balance FROM users WHERE user_id=?", (uid,)).fetchone()[0]
-        bot.edit_message_text(f"Сізде қазір: {bal}💸\nТөмендегі батырмаларды таңдаңыз:", call.message.chat.id, call.message.message_id, reply_markup=get_main_inline(uid))
+            ensure_user(user_id)
+            bal = cursor.execute("SELECT balance FROM users WHERE user_id=?", (user_id,)).fetchone()[0]
+        bot.edit_message_text(f"Сізде қазір: {bal}💸\nТөмендегі батырмаларды таңдаңыз:", call.message.chat.id, call.message.message_id, reply_markup=get_main_inline(user_id))
         return
 
 # ---------------------------
-# Flask endpoints for webhook & health
+# Flask endpoints
 # ---------------------------
 @app.route("/", methods=['GET'])
 def index():
@@ -368,22 +349,21 @@ def webhook():
     return "", 200
 
 # ---------------------------
-# Set webhook on start
+# Setup webhook
 # ---------------------------
 def setup_webhook():
     try:
-        # remove then set to ensure correct
         bot.remove_webhook()
-        full_url = WEBHOOK_URL.rstrip("/") + "/" + BOT_TOKEN
+        full_url = f"{WEBHOOK_URL.rstrip('/')}/{BOT_TOKEN}"
         result = bot.set_webhook(url=full_url)
-        logger.info(f"Set webhook -> {full_url}  result: {result}")
+        logger.info(f"Webhook set -> {full_url} | result: {result}")
     except Exception:
         logger.exception("Failed to set webhook")
 
 setup_webhook()
 
 # ---------------------------
-# Run
+# Run Flask
 # ---------------------------
 if __name__ == "__main__":
     logger.info(f"Running Flask on port {PORT}")
