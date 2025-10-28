@@ -1,4 +1,4 @@
-                       (max(bonus - 1, 0), progress + 1, user_import os
+import os
 import time
 import logging
 import sqlite3
@@ -17,9 +17,11 @@ os.makedirs(VIDEO_DIR, exist_ok=True)
 
 DB_FILE = os.environ.get("DB_FILE", "data.db")
 
+# ---------------- Logging ----------------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
+# ---------------- Bot & Flask ----------------
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode=None)
 app = Flask(__name__)
 
