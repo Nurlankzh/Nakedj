@@ -7,12 +7,12 @@ import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # === Конфиг ===
-BOT_TOKEN = os.environ.get("BOT_TOKEN") or "8419149602:AAHvLF3XmreCAQpvJy_8-RRJDH0g_qy9Oto"
-ADMIN_ID = int(os.environ.get("ADMIN_ID", "6927494520"))
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL") or "https://nakedj-2-gati.onrender.com"
-VIDEO_DIR = os.environ.get("VIDEO_DIR", "videos")
-DB_FILE = os.environ.get("DB_FILE", "data.db")
+BOT_TOKEN = "8419149602:AAHvLF3XmreCAQpvJy_8-RRJDH0g_qy9Oto"  # Сіздің бот токеніңіз
+ADMIN_ID = 6927494520  # Сіздің Telegram ID
+WEBHOOK_URL = "https://nakedj-5-hscc.onrender.com"  # Сіздің сервер URL
 
+VIDEO_DIR = "videos"
+DB_FILE = "data.db"
 os.makedirs(VIDEO_DIR, exist_ok=True)
 
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -99,7 +99,6 @@ def cmd_start(message):
                 conn.commit()
                 try: bot.send_message(invited_by, f"🎉 Сіз жаңа қолданушы шақырдыңыз! +12💸 берілді.")
                 except: pass
-
     with lock:
         bal = cursor.execute("SELECT balance FROM users WHERE user_id=?", (user_id,)).fetchone()[0]
     text = f"Сәлем 👋\nСізде қазір: {bal}💸\nТөмендегі батырмаларды таңдаңыз:"
@@ -138,10 +137,6 @@ def handle_cb(call):
                 bot.answer_callback_query(call.id, "🎬 Видеолар жоқ. Админге хабарласыңыз.")
                 return
             if user_id != ADMIN_ID and balance < 3:
-                if balance <= 0:
-                    bot.answer_callback_query(call.id, "Сіздің балансыңыз жетпейді. Дос шақырыңыз: "
-                                               + f"https://t.me/{bot.get_me().username}?start={user_id}")
-                    return
                 bot.answer_callback_query(call.id, "Біздің видео көру үшін 3💸 керек.")
                 return
             idx = progress if progress < len(rows) else 0
@@ -188,50 +183,6 @@ def handle_cb(call):
             bal = cursor.execute("SELECT balance FROM users WHERE user_id=?", (user_id,)).fetchone()[0]
         bot.edit_message_text(f"Сізде қазір: {bal}💸\nТөмендегі батырмаларды таңдаңыз:",
                               call.message.chat.id, call.message.message_id, reply_markup=get_main_inline(user_id))
-        return
-
-    # --- Admin approve/reject ---
-    if data.startswith(("approve_vid_", "reject_vid_", "approve_ph_", "reject_ph_")):
-        if user_id != ADMIN_ID:
-            bot.answer_callback_query(call.id, "Тек админ ғана.")
-            return
-        parts = data.split("_")
-        action = parts[0]
-        typ = parts[1]
-        pid = int(parts[-1])
-        with lock:
-            p = cursor.execute("SELECT uploader_id, content_type, file_id, file_path FROM pending WHERE id=?", (pid,)).fetchone()
-            if not p:
-                bot.answer_callback_query(call.id, "Pending табылмады.")
-                return
-            uploader_id, ctype, file_id, file_path = p
-            if action == "approve":
-                if ctype == "video":
-                    cursor.execute("INSERT INTO videos (file_id, file_path, added_by, created_at) VALUES (?, ?, ?, ?)",
-                                   (file_id, file_path, user_id, datetime.utcnow().isoformat()))
-                    cursor.execute("UPDATE users SET balance = balance + 40 WHERE user_id=?", (uploader_id,))
-                    conn.commit()
-                    bot.send_message(uploader_id, "🎉 Сіздің видеоңыз мақұлданды! +40💸 қосылды. Рақмет!")
-                elif ctype == "photo":
-                    cursor.execute("INSERT INTO photos (file_id, file_path, added_by, created_at) VALUES (?, ?, ?, ?)",
-                                   (file_id, file_path, user_id, datetime.utcnow().isoformat()))
-                    cursor.execute("UPDATE users SET balance = balance + 30 WHERE user_id=?", (uploader_id,))
-                    conn.commit()
-                    bot.send_message(uploader_id, "🎉 Сіздің фотоңыз мақұлданды! +30💸 қосылды. Рақмет!")
-                cursor.execute("DELETE FROM pending WHERE id=?", (pid,))
-                conn.commit()
-                bot.answer_callback_query(call.id, "Мақұлданды және авторға сыйақы берілді.")
-                try: bot.edit_message_text(f"Pending #{pid} — мақұлданды ✅",
-                                           call.message.chat.id, call.message.message_id)
-                except: pass
-            else:
-                cursor.execute("DELETE FROM pending WHERE id=?", (pid,))
-                conn.commit()
-                bot.answer_callback_query(call.id, "Тасталды.")
-                bot.send_message(uploader_id, "❌ Сіздің файл модерацияда қабылданбады.")
-                try: bot.edit_message_text(f"Pending #{pid} — тасталды ❌",
-                                           call.message.chat.id, call.message.message_id)
-                except: pass
         return
 
 # === Media handler ===
