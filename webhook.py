@@ -8,7 +8,7 @@ import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # ---------------------------
-# CONFIG / ENV
+# CONFIG
 # ---------------------------
 BOT_TOKEN = os.getenv("BOT_TOKEN") or "8419149602:AAHvLF3XmreCAQpvJy_8-RRJDH0g_qy9Oto"
 ADMIN_ID = int(os.getenv("ADMIN_ID") or "6927494520")
@@ -35,13 +35,12 @@ os.makedirs(VIDEO_DIR, exist_ok=True)
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
+# sqlite (thread-safe)
 conn = sqlite3.connect(DB_FILE, check_same_thread=False)
 cursor = conn.cursor()
 db_lock = threading.Lock()
 
-# ---------------------------
-# Create tables if not exist
-# ---------------------------
+# Create tables
 with db_lock:
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS users (
@@ -49,16 +48,6 @@ with db_lock:
         balance INTEGER DEFAULT 12,
         progress_video INTEGER DEFAULT 0,
         invited_by INTEGER
-    )
-    """)
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS pending (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        uploader_id INTEGER,
-        content_type TEXT,
-        file_id TEXT,
-        file_path TEXT,
-        created_at TEXT
     )
     """)
     cursor.execute("""
@@ -108,7 +97,7 @@ def save_file_from_fileid(file_id: str, is_video=True) -> str:
             f.write(b)
         logger.info(f"Saved file to {path}")
         return path
-    except Exception as e:
+    except Exception:
         logger.exception("save_file_from_fileid error")
         raise
 
@@ -153,74 +142,21 @@ def cmd_start(message):
 # Callback handler
 # ---------------------------
 @bot.callback_query_handler(func=lambda c: True)
-def handle_cb(call):
-    data = call.data
-    user_id = call.from_user.id
-
-    if data == "buy_channel":
-        kb = InlineKeyboardMarkup()
-        kb.add(InlineKeyboardButton("Басты мәзірге оралу", callback_data="back_main"))
-        bot.edit_message_text("Канал сатып алғыңыз келсе жазыңыз @KazHubALU",
-                              call.message.chat.id, call.message.message_id, reply_markup=kb)
-        return
-
-    if data == "channels":
-        kb = InlineKeyboardMarkup()
-        kb.add(InlineKeyboardButton("Басты мәзірге оралу", callback_data="back_main"))
-        text = "Тіркеліңіз — барлық жаңалықтар осында:\n1) https://t.me/+XRoxE_8bUM1mMmIy\n2) https://t.me/bokseklub"
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=kb)
-        return
-
-    if data == "watch_video":
-        with db_lock:
-            u = cursor.execute("SELECT balance, progress_video FROM users WHERE user_id=?", (user_id,)).fetchone()
-            if not u:
-                bot.answer_callback_query(call.id, "Алдымен /start басыңыз.")
-                return
-            balance, progress = u
-            rows = cursor.execute("SELECT id, file_id, file_path FROM videos ORDER BY id ASC").fetchall()
-            if not rows:
-                bot.answer_callback_query(call.id, "🎬 Видеолар жоқ. Админге хабарласыңыз.")
-                return
-            if user_id != ADMIN_ID and balance < 3:
-                bot.answer_callback_query(call.id, "Сіздің балансыңыз жетпейді. Дос шақырыңыз: " + f"https://t.me/{bot.get_me().username}?start={user_id}")
-                return
-            idx = progress if progress < len(rows) else 0
-            row = rows[idx]
-            file_id, file_path = row[1], row[2]
-            try:
-                if file_path and os.path.exists(file_path):
-                    with open(file_path, "rb") as f: bot.send_video(user_id, f)
-                else:
-                    bot.send_video(user_id, file_id)
-            except Exception:
-                bot.answer_callback_query(call.id, "Видео жібергенде қате.")
-                return
-            if user_id != ADMIN_ID:
-                cursor.execute("UPDATE users SET balance=?, progress_video=? WHERE user_id=?", (max(balance-3,0), idx+1, user_id))
-            else:
-                cursor.execute("UPDATE users SET progress_video=? WHERE user_id=?", (idx+1, user_id))
-            conn.commit()
-            bot.answer_callback_query(call.id, "Видео алынды.")
-        return
-
-    if data == "upload_menu":
-        kb = InlineKeyboardMarkup()
-        kb.add(InlineKeyboardButton("Видео жіберу (админға жіберіледі)", callback_data="upload_video_hint"))
-        kb.add(InlineKeyboardButton("Фото жіберу (админға жіберіледі)", callback_data="upload_photo_hint"))
-        kb.add(InlineKeyboardButton("Басты мәзірге оралу", callback_data="back_main"))
-        bot.edit_message_text("Видео немесе фото жүктегіңіз келсе соны таңдаңыз.", call.message.chat.id, call.message.message_id, reply_markup=kb)
-        return
-
-    if data == "back_main":
-        with db_lock:
-            ensure_user(user_id)
-            bal = cursor.execute("SELECT balance FROM users WHERE user_id=?", (user_id,)).fetchone()[0]
-        bot.edit_message_text(f"Сізде қазір: {bal}💸\nТөмендегі батырмаларды таңдаңыз:", call.message.chat.id, call.message.message_id, reply_markup=get_main_inline(user_id))
-        return
+def process_callback(call):
+    try:
+        if call.data == "buy_channel":
+            bot.answer_callback_query(call.id, "Канал алу функциясы әзірше белсенді емес")
+        elif call.data == "channels":
+            bot.answer_callback_query(call.id, "Арналарымыз тізімі әзірше бос")
+        elif call.data == "watch_video":
+            bot.answer_callback_query(call.id, "Видео қарау функциясы әзірше белсенді емес")
+        elif call.data == "upload_menu":
+            bot.answer_callback_query(call.id, "Видео/Фото қосу функциясы әзірше белсенді емес")
+    except Exception:
+        logger.exception("Callback handler error")
 
 # ---------------------------
-# Flask webhook endpoint
+# Webhook Flask endpoints
 # ---------------------------
 @app.route("/", methods=['GET'])
 def index():
@@ -232,3 +168,27 @@ def webhook():
         json_str = request.get_data().decode('utf-8')
         update = telebot.types.Update.de_json(json_str)
         bot.process_new_updates([update])
+    except Exception:
+        logger.exception("Webhook processing error")
+    return "", 200
+
+# ---------------------------
+# Setup webhook
+# ---------------------------
+def setup_webhook():
+    try:
+        bot.remove_webhook()
+        full_url = WEBHOOK_URL.rstrip("/") + "/webhook"
+        result = bot.set_webhook(url=full_url)
+        logger.info(f"Webhook set -> {full_url}  result: {result}")
+    except Exception:
+        logger.exception("Failed to set webhook")
+
+setup_webhook()
+
+# ---------------------------
+# Run Flask
+# ---------------------------
+if __name__ == "__main__":
+    logger.info(f"Running Flask on port {PORT}")
+    app.run(host="0.0.0.0", port=PORT)
