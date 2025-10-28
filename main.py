@@ -6,6 +6,7 @@ import threading
 from datetime import datetime
 from flask import Flask, request
 import telebot
+import shutil
 
 # ---------------- Config ----------------
 BOT_TOKEN = "8419149602:AAHvLF3XmreCAQpvJy_8-RRJDH0g_qy9Oto"
@@ -13,15 +14,18 @@ ADMIN_ID = 6927494520
 WEBHOOK_URL = "https://nakedj-5.onrender.com"
 
 VIDEO_DIR = os.environ.get("VIDEO_DIR", "videos_files")
+
+# VIDEO_DIR тексеру және жасау
+if os.path.exists(VIDEO_DIR):
+    if not os.path.isdir(VIDEO_DIR):
+        os.remove(VIDEO_DIR)  # егер файл болса, жоямыз
 os.makedirs(VIDEO_DIR, exist_ok=True)
 
 DB_FILE = os.environ.get("DB_FILE", "data.db")
 
-# ---------------- Logging ----------------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-# ---------------- Bot & Flask ----------------
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode=None)
 app = Flask(__name__)
 
