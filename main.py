@@ -10,7 +10,22 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 # === Конфиг: env-дан оқимыз ===
 BOT_TOKEN = os.environ.get("BOT_TOKEN") or "8419149602:AAHvLF3XmreCAQpvJy_8-RRJDH0g_qy9Oto"
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "6927494520"))
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL") or "https://your-render-url.onrender.com"
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL") or "https://nakedj-2-gati.onrender.com"
+/Procfile
+Go to file
+t
+Nurlankzh
+Nurlankzh
+Update Procfile
+5b6e2f5
+ · 
+39 minutes ago
+1 lines (1 loc) · 23 Bytes
+
+Code
+
+Blame
+web: gunicorn main:app
 VIDEO_DIR = os.environ.get("VIDEO_DIR", "videos")
 DB_FILE = os.environ.get("DB_FILE", "data.db")
 
