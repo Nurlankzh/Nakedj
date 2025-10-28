@@ -1,0 +1,41 @@
+@bot.message_handler(func=lambda m: m.text and "Видео" in m.text)
+def handle_watch(message):
+    user_id = message.from_user.id
+    with db_lock:
+        user = cursor.execute("SELECT bonus, progress FROM users WHERE user_id = ?", (user_id,)).fetchone()
+        videos = cursor.execute("SELECT id, file_id, file_path FROM videos ORDER BY id ASC").fetchall()
+
+    if not videos:
+        bot.send_message(user_id, "🎬 Қазір видеолар жоқ. Админге хабарласыңыз.")
+        return
+
+    bonus, progress = user
+    if bonus <= 0:
+        bot.send_message(user_id, "❌ Сіздің бонусыңыз жоқ. Дос шақырыңыз немесе күтіңіз.")
+        return
+
+    # Егер progress видеолар санынан артық болса, қайтадан бірінші видеодан бастау
+    if progress >= len(videos):
+        progress = 0
+
+    video_row = videos[progress]  # (id, file_id, file_path)
+    file_id, file_path = video_row[1], video_row[2]
+
+    try:
+        if file_path and os.path.exists(file_path):
+            with open(file_path, "rb") as vf:
+                bot.send_video(user_id, vf)
+        else:
+            bot.send_video(user_id, file_id)
+    except Exception as e:
+        logger.exception(f"Error sending video to {user_id}: {e}")
+        bot.send_message(user_id, "❌ Видео жіберілгенде қате болды. Админге хабарлаңыз.")
+        return
+
+    # Бонус азайту және прогресті арттыру
+    with db_lock:
+        cursor.execute("UPDATE users SET bonus = ?, progress = ? WHERE user_id = ?",
+                       (max(bonus - 1, 0), progress + 1, user_id))
+        conn.commit()
+
+    bot.send_message(user_id, f"✅ Видео көрсетілді! Қалған бонус: {max(bonus - 1, 0)}")
