@@ -202,8 +202,9 @@ def handle_text(msg):
     
     # --- Реферал сілтеме ---
     elif text == "🔗 Реферал сілтеме":
-        bot.send_message(user_id, f"Сіздің реферал сілтеме: https://t.me/KazHubcombot?start={user_id}")
-        return
+    referral_link = f"https://t.me/Sallemkz_bot?start={user_id}"
+    bot.send_message(user_id, f"Сіздің реферал сілтемеңіз:\n{referral_link}")
+    return
     
     # --- Ақпарат ---
     elif text == "ℹ️ Ақпарат":
