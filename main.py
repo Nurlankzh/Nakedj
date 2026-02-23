@@ -141,9 +141,8 @@ def cmd_start(msg):
     ensure_user(user_id, invited_by=ref)
     with db_lock:
         bal = cursor.execute("SELECT balance FROM users WHERE user_id=?", (user_id,)).fetchone()[0]
-    referral_link = f"https://t.me/Sallemkz_bot?start={user_id}"
     bot.send_message(user_id,
-                     f"Сәлем 👋\nСізде қазір: {bal}💸\n\nСіздің реферал сілтемеңіз:\n{referral_link}\n\nТөмендегі кнопкаларды таңдаңыз:",
+                     f"Сәлем 👋\nСізде қазір: {bal}💸\nТөмендегі кнопкаларды таңдаңыз:",
                      reply_markup=get_main_keyboard(admin=(user_id==ADMIN_ID)))
 
 # ---------------------------
@@ -203,8 +202,8 @@ def handle_text(msg):
     
     # --- Реферал сілтеме ---
     elif text == "🔗 Реферал сілтеме":
-        referral_link = f"https://t.me/Sallemkz_bot?start={user_id}"
-        bot.send_message(user_id, f"Сіздің реферал сілтемеңіз:\n{referral_link}")
+        # Міне реферал толық дұрыс
+        bot.send_message(user_id, f"Сіздің реферал сілтеме: https://t.me/Sallemkz_bot?start={user_id}")
         return
     
     # --- Ақпарат ---
@@ -220,15 +219,29 @@ def handle_text(msg):
     # --- Админ --- Pending файлы
     elif text == "✅ Pending файлдар" and user_id==ADMIN_ID:
         with db_lock:
-            pendings = cursor.execute("SELECT id, uploader_id, content_type FROM pending ORDER BY id ASC").fetchall()
+            pendings = cursor.execute("SELECT id, uploader_id, content_type, file_id, file_path FROM pending ORDER BY id ASC").fetchall()
         if not pendings:
             bot.send_message(user_id, "Pending файлдар жоқ.")
             return
-        for pid, uploader, ctype in pendings:
+
+        for pid, uploader, ctype, file_id, file_path in pendings:
             kb = InlineKeyboardMarkup()
             kb.add(InlineKeyboardButton("Мақұлдау", callback_data=f"approve_{pid}"))
             kb.add(InlineKeyboardButton("Растамау", callback_data=f"reject_{pid}"))
-            bot.send_message(user_id, f"#{pid} {ctype} жіберген: {uploader}", reply_markup=kb)
+
+            if ctype == "video":
+                if file_path and os.path.exists(file_path):
+                    with open(file_path, "rb") as f:
+                        bot.send_video(ADMIN_ID, f, caption=f"#{pid} {ctype} жіберген: {uploader}", reply_markup=kb)
+                else:
+                    bot.send_video(ADMIN_ID, file_id, caption=f"#{pid} {ctype} жіберген: {uploader}", reply_markup=kb)
+            else:  # photo
+                if file_path and os.path.exists(file_path):
+                    with open(file_path, "rb") as f:
+                        bot.send_photo(ADMIN_ID, f, caption=f"#{pid} {ctype} жіберген: {uploader}", reply_markup=kb)
+                else:
+                    bot.send_photo(ADMIN_ID, file_id, caption=f"#{pid} {ctype} жіберген: {uploader}", reply_markup=kb)
+
         return
     
     # --- Админ --- Статистика
