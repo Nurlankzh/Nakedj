@@ -5,14 +5,14 @@ import threading
 from datetime import datetime
 from flask import Flask, request
 import telebot
-from telebot.types import ReplyKeyboardMarkup, KeyboardButton
+from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
 # ---------------------------
 # CONFIG
 # ---------------------------
 BOT_TOKEN = os.getenv("BOT_TOKEN") or "8419149602:AAHvLF3XmreCAQpvJy_8-RRJDH0g_qy9Oto"
-ADMIN_ID = int(os.getenv("ADMIN_ID") or "6303091468")  # Админ айди
-CHANNEL_USERNAME = "@kazakcombots"  # Тексерілетін канал
+ADMIN_ID = 6303091468  # админ айди
+CHANNEL_USERNAME = "@kazakcombots"  # тексерілетін канал
 WEBHOOK_URL = os.getenv("WEBHOOK_URL") or "https://web-production-0cd8e.up.railway.app"
 VIDEO_DIR = "videos"
 DB_FILE = "data.db"
@@ -102,8 +102,10 @@ def ensure_user(user_id, invited_by=None):
 def get_main_keyboard(admin=False):
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
     kb.row(KeyboardButton("🎥 Видео көру"), KeyboardButton("➕ Видео/Фото жіберу"))
+    kb.row(KeyboardButton("💸 Мой бонус"), KeyboardButton("🔗 Реферал сілтеме"))
+    kb.row(KeyboardButton("ℹ️ Ақпарат"))
     if admin:
-        kb.row(KeyboardButton("💰 Бонус беру"))
+        kb.row(KeyboardButton("💰 Бонус беру"), KeyboardButton("✅ Pending файлдар"), KeyboardButton("📊 Статистика"))
     return kb
 
 def save_file(file_id, is_video=True):
@@ -152,12 +154,11 @@ def handle_text(msg):
     text = msg.text
     ensure_user(user_id)
     
+    # --- Видео көру ---
     if text == "🎥 Видео көру":
-        # Канал тексеру
         if not check_subscription(user_id):
             bot.send_message(user_id, f"📢 Видео көру үшін {CHANNEL_USERNAME} каналына тіркеліңіз!")
             return
-        # Видео очереді
         with db_lock:
             u = cursor.execute("SELECT balance, progress_video FROM users WHERE user_id=?", (user_id,)).fetchone()
             balance, progress = u
@@ -185,27 +186,75 @@ def handle_text(msg):
             else:
                 cursor.execute("UPDATE users SET progress_video=? WHERE user_id=?", (idx+1, user_id))
             conn.commit()
+        return
     
+    # --- Видео/Фото жіберу ---
     elif text == "➕ Видео/Фото жіберу":
         bot.send_message(user_id, "Файл жіберіңіз (админ мақұлдайды).")
+        return
     
+    # --- Мой бонус ---
+    elif text == "💸 Мой бонус":
+        with db_lock:
+            bal = cursor.execute("SELECT balance FROM users WHERE user_id=?", (user_id,)).fetchone()[0]
+        bot.send_message(user_id, f"Сізде қазір: {bal}💸")
+        return
+    
+    # --- Реферал сілтеме ---
+    elif text == "🔗 Реферал сілтеме":
+        bot.send_message(user_id, f"Сіздің реферал сілтеме: https://t.me/KazHubcombot?start={user_id}")
+        return
+    
+    # --- Ақпарат ---
+    elif text == "ℹ️ Ақпарат":
+        bot.send_message(user_id, f"Бот қалай жұмыс істейді:\n- Видео көру үшін бонус қажет\n- Видео/Фото жібере аласыз\n- Админ мақұлдайды\n- Реферал арқылы бонус аласыз")
+        return
+    
+    # --- Админ --- Бонус беру
     elif text == "💰 Бонус беру" and user_id==ADMIN_ID:
         bot.send_message(user_id, "Формат: <user_id> <сома>")
+        return
     
+    # --- Админ --- Pending файлы
+    elif text == "✅ Pending файлдар" and user_id==ADMIN_ID:
+        with db_lock:
+            pendings = cursor.execute("SELECT id, uploader_id, content_type FROM pending ORDER BY id ASC").fetchall()
+        if not pendings:
+            bot.send_message(user_id, "Pending файлдар жоқ.")
+            return
+        for pid, uploader, ctype in pendings:
+            kb = InlineKeyboardMarkup()
+            kb.add(InlineKeyboardButton("Мақұлдау", callback_data=f"approve_{pid}"))
+            kb.add(InlineKeyboardButton("Растамау", callback_data=f"reject_{pid}"))
+            bot.send_message(user_id, f"#{pid} {ctype} жіберген: {uploader}", reply_markup=kb)
+        return
+    
+    # --- Админ --- Статистика
+    elif text == "📊 Статистика" and user_id==ADMIN_ID:
+        with db_lock:
+            users_count = cursor.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+            videos_count = cursor.execute("SELECT COUNT(*) FROM videos").fetchone()[0]
+            pending_count = cursor.execute("SELECT COUNT(*) FROM pending").fetchone()[0]
+        bot.send_message(user_id, f"📊 Статистика:\nҚолданушылар: {users_count}\nВидео: {videos_count}\nPending: {pending_count}")
+        return
+    
+    # --- Админ Бонус беру командасы ---
+    elif user_id==ADMIN_ID:
+        try:
+            parts = text.split()
+            target_id = int(parts[0])
+            amount = int(parts[1])
+            cursor.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (amount, target_id))
+            conn.commit()
+            bot.send_message(user_id, f"{amount}💸 {target_id}-қа берілді.")
+            bot.send_message(target_id, f"🎉 Сізге {amount}💸 берілді!")
+        except:
+            pass
+        return
+    
+    # Басқа хабарламалар
     else:
-        if user_id==ADMIN_ID and text.startswith(tuple("0123456789")):
-            try:
-                parts = text.split()
-                target_id = int(parts[0])
-                amount = int(parts[1])
-                cursor.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (amount, target_id))
-                conn.commit()
-                bot.send_message(user_id, f"{amount}💸 {target_id}-қа берілді.")
-                bot.send_message(target_id, f"🎉 Сізге {amount}💸 берілді!")
-            except:
-                bot.send_message(user_id, "Қате формат!")
-        else:
-            bot.send_message(user_id, "Түсінбедім 😅", reply_markup=get_main_keyboard(admin=(user_id==ADMIN_ID)))
+        bot.send_message(user_id, "Түсінбедім 😅", reply_markup=get_main_keyboard(admin=(user_id==ADMIN_ID)))
 
 # ---------------------------
 # Media messages
@@ -245,6 +294,44 @@ def handle_media(msg):
         pid = cursor.lastrowid
         conn.commit()
     bot.send_message(user_id, "✅ Файл модерацияға жіберілді. Админ мақұлдағаннан кейін бонус беріледі.")
+
+# ---------------------------
+# Callback handler for approve/reject
+# ---------------------------
+@bot.callback_query_handler(func=lambda c: True)
+def handle_cb(call):
+    data = call.data
+    user_id = call.from_user.id
+    if user_id!=ADMIN_ID:
+        bot.answer_callback_query(call.id, "Тек админ.")
+        return
+    if data.startswith("approve_") or data.startswith("reject_"):
+        action, pid = data.split("_")
+        pid = int(pid)
+        with db_lock:
+            p = cursor.execute("SELECT uploader_id, content_type, file_id, file_path FROM pending WHERE id=?", (pid,)).fetchone()
+            if not p:
+                bot.answer_callback_query(call.id, "Pending жоқ")
+                return
+            uploader_id, ctype, file_id, file_path = p
+            if action=="approve":
+                if ctype=="video":
+                    cursor.execute("INSERT INTO videos (file_id, file_path, added_by, created_at) VALUES (?, ?, ?, ?)",
+                                   (file_id, file_path, user_id, datetime.utcnow().isoformat()))
+                    cursor.execute("UPDATE users SET balance = balance + 12 WHERE user_id=?", (uploader_id,))
+                else:
+                    cursor.execute("INSERT INTO photos (file_id, file_path, added_by, created_at) VALUES (?, ?, ?, ?)",
+                                   (file_id, file_path, user_id, datetime.utcnow().isoformat()))
+                    cursor.execute("UPDATE users SET balance = balance + 12 WHERE user_id=?", (uploader_id,))
+                cursor.execute("DELETE FROM pending WHERE id=?", (pid,))
+                conn.commit()
+                bot.send_message(uploader_id, f"🎉 Сіздің {ctype} мақұлданды! +12💸 берілді.")
+                bot.answer_callback_query(call.id, "Мақұлданды")
+            else:
+                cursor.execute("DELETE FROM pending WHERE id=?", (pid,))
+                conn.commit()
+                bot.send_message(uploader_id, f"❌ Сіздің файл мақұлданбады.")
+                bot.answer_callback_query(call.id, "Тасталды")
 
 # ---------------------------
 # Webhook + Flask
