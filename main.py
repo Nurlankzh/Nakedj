@@ -141,8 +141,9 @@ def cmd_start(msg):
     ensure_user(user_id, invited_by=ref)
     with db_lock:
         bal = cursor.execute("SELECT balance FROM users WHERE user_id=?", (user_id,)).fetchone()[0]
+    referral_link = f"https://t.me/Sallemkz_bot?start={user_id}"
     bot.send_message(user_id,
-                     f"Сәлем 👋\nСізде қазір: {bal}💸\nТөмендегі кнопкаларды таңдаңыз:",
+                     f"Сәлем 👋\nСізде қазір: {bal}💸\n\nСіздің реферал сілтемеңіз:\n{referral_link}\n\nТөмендегі кнопкаларды таңдаңыз:",
                      reply_markup=get_main_keyboard(admin=(user_id==ADMIN_ID)))
 
 # ---------------------------
@@ -202,7 +203,8 @@ def handle_text(msg):
     
     # --- Реферал сілтеме ---
     elif text == "🔗 Реферал сілтеме":
-        bot.send_message(user_id, f"Сіздің реферал сілтеме: https://t.me/Sallemkz_bot?start={user_id={user_id}")
+        referral_link = f"https://t.me/Sallemkz_bot?start={user_id}"
+        bot.send_message(user_id, f"Сіздің реферал сілтемеңіз:\n{referral_link}")
         return
     
     # --- Ақпарат ---
