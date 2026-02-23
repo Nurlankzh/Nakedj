@@ -129,6 +129,29 @@ def check_subscription(user_id):
     return False
 
 # ---------------------------
+# Helpers
+# ---------------------------
+def ensure_user(user_id, invited_by=None):
+    """Қолданушыны базаға қосу және шақырған адамға бонус беру"""
+    with db_lock:
+        exists = cursor.execute("SELECT 1 FROM users WHERE user_id=?", (user_id,)).fetchone()
+        if not exists:
+            cursor.execute(
+                "INSERT INTO users (user_id, balance, invited_by) VALUES (?, ?, ?)",
+                (user_id, 3, invited_by)
+            )
+            conn.commit()
+            # Invite bonus
+            if invited_by and invited_by != user_id:
+                # Тек шақырған адам бар болса және өзі шақырмай жатпаса
+                cursor.execute("UPDATE users SET balance = balance + 6 WHERE user_id=?", (invited_by,))
+                conn.commit()
+                try:
+                    bot.send_message(invited_by, "🎉 Сіз жаңа қолданушы шақырдыңыз! +6💸 берілді.")
+                except: 
+                    pass
+
+# ---------------------------
 # Handlers
 # ---------------------------
 @bot.message_handler(commands=['start'])
@@ -136,57 +159,35 @@ def cmd_start(msg):
     user_id = msg.from_user.id
     args = msg.text.split()
     ref = None
-    if len(args) > 1 and args[1].isdigit():
-        ref = int(args[1])
+
+    # --- Реферал тексеру ---
+    if len(args) > 1:
+        param = args[1]
+        # Сілтеме түрі: ?start=USER_ID немесе тек USER_ID
+        if param.startswith("start=") and param[6:].isdigit():
+            ref = int(param[6:])
+        elif param.isdigit():
+            ref = int(param)
+
     ensure_user(user_id, invited_by=ref)
+
     with db_lock:
         bal = cursor.execute("SELECT balance FROM users WHERE user_id=?", (user_id,)).fetchone()[0]
-    bot.send_message(user_id,
-                     f"Сәлем 👋\nСізде қазір: {bal}💸\nТөмендегі кнопкаларды таңдаңыз:",
-                     reply_markup=get_main_keyboard(admin=(user_id==ADMIN_ID)))
 
-# ---------------------------
-# Text messages
-# ---------------------------
-@bot.message_handler(func=lambda m: True)
-def handle_text(msg):
-    user_id = msg.from_user.id
-    text = msg.text
-    ensure_user(user_id)
-    
-    # --- Видео көру ---
-    if text == "🎥 Видео көру":
-        if not check_subscription(user_id):
-            bot.send_message(user_id, f"📢 Видео көру үшін {CHANNEL_USERNAME} каналына тіркеліңіз!")
-            return
-        with db_lock:
-            u = cursor.execute("SELECT balance, progress_video FROM users WHERE user_id=?", (user_id,)).fetchone()
-            balance, progress = u
-            rows = cursor.execute("SELECT id, file_id, file_path FROM videos ORDER BY id ASC").fetchall()
-            if not rows:
-                bot.send_message(user_id, "🎬 Видеолар жоқ.")
-                return
-            if user_id != ADMIN_ID and balance < 2:
-                bot.send_message(user_id, "💸 Видео көру үшін 2 бонус керек.")
-                return
-            idx = progress if progress < len(rows) else 0
-            file_id, file_path = rows[idx][1], rows[idx][2]
-            try:
-                if file_path and os.path.exists(file_path):
-                    with open(file_path, "rb") as f:
-                        bot.send_video(user_id, f)
-                else:
-                    bot.send_video(user_id, file_id)
-            except:
-                bot.send_message(user_id, "Видео жібергенде қате.")
-                return
-            if user_id != ADMIN_ID:
-                cursor.execute("UPDATE users SET balance=?, progress_video=? WHERE user_id=?",
-                               (max(balance-2,0), idx+1, user_id))
-            else:
-                cursor.execute("UPDATE users SET progress_video=? WHERE user_id=?", (idx+1, user_id))
-            conn.commit()
-        return
+    # Реферал сілтемесі нақты @Sallemkz_bot
+    referral_link = f"https://t.me/Sallemkz_bot?start={user_id}"
+
+    bot.send_message(
+        user_id,
+        f"Сәлем 👋\nСізде қазір: {bal}💸\nСіздің жеке реферал сілтемеңіз:\n{referral_link}\nТөмендегі кнопкаларды таңдаңыз:",
+        reply_markup=get_main_keyboard(admin=(user_id==ADMIN_ID))
+    )
+
+# --- Тек реферал батырмасы үшін ---
+elif text == "🔗 Реферал сілтеме":
+    referral_link = f"https://t.me/Sallemkz_bot?start={user_id}"
+    bot.send_message(user_id, f"Сіздің реферал сілтеме: {referral_link}")
+    return
     
     # --- Видео/Фото жіберу ---
     elif text == "➕ Видео/Фото жіберу":
