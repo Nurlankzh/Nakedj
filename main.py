@@ -1,16 +1,16 @@
-# main.py
 import os
 import logging
 import sqlite3
 import threading
+import random
+import time
 from datetime import datetime, timedelta
 from flask import Flask, request
 import telebot
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
-import random
 
 # ---------------------------
-# CONFIG
+# CONFIGURATION
 # ---------------------------
 BOT_TOKEN = "7875991285:AAG4pChovJ67bxytVzB2-aIXrRYKUoWRtvw"
 ADMIN_ID = 6303091468
@@ -21,550 +21,399 @@ DB_FILE = "data.db"
 PORT = 10000
 SHOP_USERNAME = "@KazHUBKZ"
 
-# ---------------------------
-# Logging
-# ---------------------------
+# Logging setup
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-# ---------------------------
-# Ensure folders
-# ---------------------------
-os.makedirs(MEDIA_DIR, exist_ok=True)
+if not os.path.exists(MEDIA_DIR):
+    os.makedirs(MEDIA_DIR)
 
 # ---------------------------
-# Bot + Flask + DB
+# INITIALIZATION
 # ---------------------------
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
-conn = sqlite3.connect(DB_FILE, check_same_thread=False)
-cursor = conn.cursor()
 db_lock = threading.Lock()
 
-# ---------------------------
-# DB tables
-# ---------------------------
-with db_lock:
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS users (
-        user_id INTEGER PRIMARY KEY,
-        balance INTEGER DEFAULT 3,
-        progress_video INTEGER DEFAULT 0,
-        invited_by INTEGER,
-        is_adult INTEGER DEFAULT 0
-    )""")
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS pending (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        uploader_id INTEGER,
-        content_type TEXT,
-        file_id TEXT,
-        file_path TEXT,
-        created_at TEXT
-    )""")
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS videos (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        file_id TEXT,
-        file_path TEXT,
-        added_by INTEGER,
-        created_at TEXT
-    )""")
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS photos (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        file_id TEXT,
-        file_path TEXT,
-        added_by INTEGER,
-        created_at TEXT
-    )""")
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS lottery (
-        user_id INTEGER PRIMARY KEY,
-        joined_at TEXT
-    )""")
-    conn.commit()
+def get_db_connection():
+    conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+    return conn
+
+# Database Tables Setup
+def init_db():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    with db_lock:
+        cursor.execute("""CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            balance INTEGER DEFAULT 3,
+            progress_video INTEGER DEFAULT 0,
+            invited_by INTEGER,
+            is_adult INTEGER DEFAULT 0,
+            joined_at TEXT
+        )""")
+        cursor.execute("""CREATE TABLE IF NOT EXISTS pending (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            uploader_id INTEGER,
+            content_type TEXT,
+            file_id TEXT,
+            file_path TEXT,
+            created_at TEXT
+        )""")
+        cursor.execute("""CREATE TABLE IF NOT EXISTS videos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_id TEXT,
+            file_path TEXT,
+            added_by INTEGER,
+            created_at TEXT
+        )""")
+        cursor.execute("""CREATE TABLE IF NOT EXISTS photos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_id TEXT,
+            file_path TEXT,
+            added_by INTEGER,
+            created_at TEXT
+        )""")
+        cursor.execute("""CREATE TABLE IF NOT EXISTS lottery (
+            user_id INTEGER PRIMARY KEY,
+            joined_at TEXT
+        )""")
+        conn.commit()
+    conn.close()
+
+init_db()
 
 # ---------------------------
-# HELPERS
+# KEYBOARDS
+# ---------------------------
+def get_main_keyboard(user_id):
+    kb = ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.row(KeyboardButton("🎥 Видео көру"), KeyboardButton("➕ Видео/Фото жіберу"))
+    kb.row(KeyboardButton("💸 Мой бонус"), KeyboardButton("🔗 Реферал сілтеме"))
+    kb.row(KeyboardButton("🛒 Магазин"), KeyboardButton("ℹ️ Ақпарат"))
+    
+    # Лотерея белсенді болса көрсету
+    if lottery_status():
+        kb.row(KeyboardButton("🎯 Лотереяға қатысу"))
+        
+    if user_id == ADMIN_ID:
+        kb.row(KeyboardButton("✅ Pending файлдар"), KeyboardButton("📊 Статистика"))
+        kb.row(KeyboardButton("🎯 Лотерея бастау"), KeyboardButton("🎖 Лотерея жеңімпазын таңдау"))
+        kb.row(KeyboardButton("🏆 Топ 10 шақырғандар"), KeyboardButton("📢 Рассылка"))
+        kb.row(KeyboardButton("💰 Бонус беру"))
+    return kb
+
+# ---------------------------
+# HELPER FUNCTIONS
 # ---------------------------
 def ensure_user(user_id, invited_by=None):
+    conn = get_db_connection()
+    cursor = conn.cursor()
     with db_lock:
-        exists = cursor.execute("SELECT 1 FROM users WHERE user_id=?", (user_id,)).fetchone()
-        if not exists:
-            cursor.execute("INSERT INTO users (user_id,balance,invited_by) VALUES (?,?,?)", (user_id,3,invited_by))
+        user = cursor.execute("SELECT 1 FROM users WHERE user_id=?", (user_id,)).fetchone()
+        if not user:
+            now = datetime.utcnow().isoformat()
+            cursor.execute("INSERT INTO users (user_id, balance, invited_by, joined_at) VALUES (?, ?, ?, ?)", 
+                           (user_id, 3, invited_by, now))
             conn.commit()
             if invited_by and invited_by != user_id:
                 cursor.execute("UPDATE users SET balance = balance + 6 WHERE user_id=?", (invited_by,))
                 conn.commit()
                 try:
-                    bot.send_message(invited_by, "🎉 Сіз жаңа қолданушы шақырдыңыз! +6💸 берілді.")
+                    bot.send_message(invited_by, "🎊 Сіздің сілтемеңізбен жаңа қолданушы тіркелді! Сізге +6💸 бонус берілді.")
                 except: pass
-
-def get_main_keyboard(admin=False, lottery_active=False):
-    kb = ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.row(KeyboardButton("🎥 Видео көру"), KeyboardButton("➕ Видео/Фото жіберу"))
-    kb.row(KeyboardButton("💸 Мой бонус"), KeyboardButton("🔗 Реферал сілтеме"))
-    kb.row(KeyboardButton("🛒 Магазин"), KeyboardButton("ℹ️ Ақпарат"))
-    if lottery_active:
-        kb.row(KeyboardButton("🎯 Лотереяға қатысу"))
-    if admin:
-        kb.row(
-            KeyboardButton("💰 Бонус беру"),
-            KeyboardButton("✅ Pending файлдар"),
-            KeyboardButton("📊 Статистика"),
-            KeyboardButton("📢 Рассылка"),
-            KeyboardButton("🎯 Лотерея бастау"),
-            KeyboardButton("🏆 Топ 10 шақырғандар"),
-            KeyboardButton("🎖 Лотерея жеңімпазын таңдау")
-        )
-    return kb
-
-def save_file(file_id, is_video=True):
-    file_info = bot.get_file(file_id)
-    b = bot.download_file(file_info.file_path)
-    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
-    ext = ".mp4" if is_video else ".jpg"
-    fname = f"{ts}_{file_id.replace('/','_')}{ext}"
-    path = os.path.join(MEDIA_DIR, fname)
-    with open(path,"wb") as f:
-        f.write(b)
-    return path
+    conn.close()
 
 def check_subscription(user_id):
+    if user_id == ADMIN_ID: return True
     try:
         member = bot.get_chat_member(CHANNEL_USERNAME, user_id)
-        return member.status in ["member","administrator","creator"]
+        return member.status in ['member', 'administrator', 'creator']
     except: return False
 
-def remove_old_pending():
-    with db_lock:
-        old = datetime.utcnow() - timedelta(hours=5)
-        cursor.execute("DELETE FROM pending WHERE created_at<?", (old.isoformat(),))
-        conn.commit()
-
 def lottery_status():
-    with db_lock:
-        return cursor.execute("SELECT COUNT(*) FROM lottery").fetchone()[0] > 0
+    conn = get_db_connection()
+    count = conn.execute("SELECT COUNT(*) FROM lottery").fetchone()[0]
+    conn.close()
+    return count >= 0 # Логика бойынша кесте бар болса
+
+def save_media_file(file_id, is_video=True):
+    file_info = bot.get_file(file_id)
+    downloaded_file = bot.download_file(file_info.file_path)
+    ext = ".mp4" if is_video else ".jpg"
+    filename = f"{int(time.time())}_{file_id[:10]}{ext}"
+    path = os.path.join(MEDIA_DIR, filename)
+    with open(path, 'wb') as new_file:
+        new_file.write(downloaded_file)
+    return path
 
 # ---------------------------
-# START COMMAND
+# COMMAND HANDLERS
 # ---------------------------
 @bot.message_handler(commands=['start'])
-def cmd_start(msg):
-    user_id = msg.from_user.id
-    args = msg.text.split()
-    ref = int(args[1]) if len(args) > 1 and args[1].isdigit() else None
-    ensure_user(user_id, invited_by=ref)
-    kb = InlineKeyboardMarkup()
-    kb.add(InlineKeyboardButton("Ия", callback_data="adult_yes"))
-    kb.add(InlineKeyboardButton("Жоқ", callback_data="adult_no"))
-    bot.send_message(user_id, "🔞 Сіз 18 жасқа толдыңыз ба?", reply_markup=kb)
+def start_cmd(message):
+    user_id = message.from_user.id
+    text_parts = message.text.split()
+    ref_id = None
+    if len(text_parts) > 1 and text_parts[1].isdigit():
+        ref_id = int(text_parts[1])
+    
+    ensure_user(user_id, ref_id)
+    
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("✅ Ия, 18-ден астым", callback_data="confirm_adult"),
+               InlineKeyboardButton("❌ Жоқ", callback_data="decline_adult"))
+    
+    bot.send_message(user_id, "✋ Сәлем! Ботты қолдану үшін жасыңыз 18-ден асқан болуы керек. Растайсыз ба?", reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda c: c.data.startswith("adult_"))
-def handle_adult_cb(call):
+# ---------------------------
+# CALLBACK HANDLERS
+# ---------------------------
+@bot.callback_query_handler(func=lambda call: True)
+def callback_manager(call):
     user_id = call.from_user.id
-    if call.data=="adult_yes":
-        cursor.execute("UPDATE users SET is_adult=1 WHERE user_id=?", (user_id,))
-        conn.commit()
-        bot.send_message(user_id, "✅ Сіз 18+ ересектер ботқа қол жеткіздіңіз.",
-                         reply_markup=get_main_keyboard(admin=(user_id==ADMIN_ID), lottery_active=lottery_status()))
-    else:
-        cursor.execute("UPDATE users SET is_adult=0 WHERE user_id=?", (user_id,))
-        conn.commit()
-        bot.send_message(user_id, "❌ Бұл бот тек 18+ адамдарға арналған.")
+    conn = get_db_connection()
+    cursor = conn.cursor()
 
-# ---------------------------
-# TEXT HANDLER
-# ---------------------------
-@bot.message_handler(func=lambda m: True)
-def handle_text(msg):
-    remove_old_pending()
-    user_id = msg.from_user.id
-    text = msg.text
-    u = cursor.execute("SELECT is_adult FROM users WHERE user_id=?", (user_id,)).fetchone()
-    if not u or u[0] != 1:
-        bot.send_message(user_id, "❌ Бұл бот тек 18+ пайдаланушыларға арналған.")
-        return
-    ensure_user(user_id)
-
-    # --- VIDEO ---
-    if text == "🎥 Видео көру":
-        if not check_subscription(user_id):
-            bot.send_message(user_id, f"📢 Видео көру үшін {CHANNEL_USERNAME} каналына тіркеліңіз!")
-            return
+    if call.data == "confirm_adult":
         with db_lock:
-            balance, progress = cursor.execute("SELECT balance, progress_video FROM users WHERE user_id=?", (user_id,)).fetchone()
-            rows = cursor.execute("SELECT file_id, file_path FROM videos ORDER BY id ASC").fetchall()
-            if not rows:
-                bot.send_message(user_id, "🎬 Видеолар жоқ.")
-                return
-            if user_id != ADMIN_ID and balance < 2:
-                bot.send_message(user_id, "💸 Видео көру үшін 2 бонус қажет.")
-                return
-            idx = progress if progress < len(rows) else 0
-            file_id, file_path = rows[idx]
-            try:
-                if file_path and os.path.exists(file_path):
-                    with open(file_path, "rb") as f:
-                        bot.send_video(user_id, f)
-                else:
-                    bot.send_video(user_id, file_id)
-            except:
-                bot.send_message(user_id, "Видео жібергенде қате.")
-                return
-            cursor.execute("UPDATE users SET balance=?, progress_video=? WHERE user_id=?", (max(balance-2,0), idx+1, user_id))
+            cursor.execute("UPDATE users SET is_adult=1 WHERE user_id=?", (user_id,))
             conn.commit()
-        return
+        bot.edit_message_text("✅ Рақмет! Енді боттың барлық мүмкіндігі ашық.", chat_id=user_id, message_id=call.message.message_id)
+        bot.send_message(user_id, "Төмендегі батырмаларды қолданыңыз:", reply_markup=get_main_keyboard(user_id))
 
-    # --- MEDIA UPLOAD ---
-    elif text == "➕ Видео/Фото жіберу":
-        bot.send_message(user_id, "Файл жіберіңіз. Админ мақұлдайды.")
-        return
+    elif call.data == "decline_adult":
+        bot.answer_callback_query(call.id, "Кешіріңіз, бұл бот тек ересектерге арналған.", show_alert=True)
 
-    # --- BONUS ---
-    elif text == "💸 Мой бонус":
-        bal = cursor.execute("SELECT balance FROM users WHERE user_id=?", (user_id,)).fetchone()[0]
-        bot.send_message(user_id, f"Сізде қазір: {bal}💸")
-        return
-
-    # --- REFERRAL ---
-    elif text == "🔗 Реферал сілтеме":
-        bot.send_message(user_id, f"Сіздің реферал сілтеме: https://t.me/KazHub_slivbot?start={user_id}")
-        return
-
-    # --- SHOP ---
-    elif text == "🛒 Магазин":
-        bot.send_message(user_id, f"Бонус сатып алғыңыз келсе: {SHOP_USERNAME} жазыңыз.")
-        return
-
-    # --- INFO ---
-    elif text == "ℹ️ Ақпарат":
-        bot.send_message(user_id, "Бот қалай жұмыс істейді:\n- Видео көру үшін бонус қажет\n- Видео/Фото жіберу админ арқылы\n- Реферал арқылы бонус\n- 18+ адамдарға арналған")
-        return
-
-    # --- LOTTERY JOIN ---
-    elif text == "🎯 Лотереяға қатысу":
+    elif call.data.startswith("appr_"):
+        pid = call.data.split("_")[1]
         with db_lock:
-            if not lottery_status():
-                bot.send_message(user_id,"Лотерея әлі басталмаған.")
-                return
-            exists = cursor.execute("SELECT 1 FROM lottery WHERE user_id=?",(user_id,)).fetchone()
-            if exists:
-                bot.send_message(user_id,"Сіз бұрын қосылғансыз!")
-                return
-            cursor.execute("INSERT INTO lottery (user_id, joined_at) VALUES (?,?)",(user_id, datetime.utcnow().isoformat()))
-            conn.commit()
-        bot.send_message(user_id,"🎉 Сіз Лотереяға қосылдыңыз!")
-        return
+            p = cursor.execute("SELECT uploader_id, content_type, file_id, file_path FROM pending WHERE id=?", (pid,)).fetchone()
+            if p:
+                uid, ctype, fid, fpath = p
+                table = "videos" if ctype == "video" else "photos"
+                cursor.execute(f"INSERT INTO {table} (file_id, file_path, added_by, created_at) VALUES (?,?,?,?)", 
+                               (fid, fpath, uid, datetime.utcnow().isoformat()))
+                cursor.execute("UPDATE users SET balance = balance + 12 WHERE user_id=?", (uid,))
+                cursor.execute("DELETE FROM pending WHERE id=?", (pid,))
+                conn.commit()
+                try: bot.send_message(uid, "✅ Құттықтаймыз! Сіз жіберген файл мақұлданды. +12💸 берілді.")
+                except: pass
+        bot.edit_message_caption("✅ Мақұлданды", chat_id=ADMIN_ID, message_id=call.message.message_id)
 
-    # --- ADMIN ONLY ---
-    if user_id != ADMIN_ID:
-        return
-
-    # Бонус беру
-    if " " in text:
-        try:
-            parts = text.split()
-            target_id = int(parts[0])
-            amount = int(parts[1])
-            cursor.execute("UPDATE users SET balance=balance+? WHERE user_id=?",(amount,target_id))
-            conn.commit()
-            bot.send_message(user_id,f"{amount}💸 {target_id}-қа берілді.")
-            bot.send_message(target_id,f"🎉 Сізге {amount}💸 берілді!")
-        except: pass
-        return
-
-    # Pending
-    elif text=="✅ Pending файлдар":
-        pendings = cursor.execute("SELECT id,uploader_id,content_type,file_id,file_path FROM pending ORDER BY id ASC").fetchall()
-        if not pendings: bot.send_message(user_id,"Pending файлдар жоқ."); return
-        for pid,uploader,ctype,file_id,file_path in pendings:
-            kb = InlineKeyboardMarkup()
-            kb.add(InlineKeyboardButton("Мақұлдау", callback_data=f"approve_{pid}"))
-            kb.add(InlineKeyboardButton("Растамау", callback_data=f"reject_{pid}"))
-            try:
-                if ctype=="video":
-                    if file_path and os.path.exists(file_path):
-                        with open(file_path,"rb") as f: bot.send_video(user_id,f,caption=f"#{pid} {ctype} from {uploader}", reply_markup=kb)
-                    else:
-                        bot.send_video(user_id,file_id,caption=f"#{pid} {ctype} from {uploader}", reply_markup=kb)
-                else:
-                    if file_path and os.path.exists(file_path):
-                        with open(file_path,"rb") as f: bot.send_photo(user_id,f,caption=f"#{pid} {ctype} from {uploader}", reply_markup=kb)
-                    else:
-                        bot.send_photo(user_id,file_id,caption=f"#{pid} {ctype} from {uploader}", reply_markup=kb)
-            except: pass
-        return
-
-    # Лотерея бастау
-    elif text=="🎯 Лотерея бастау":
+    elif call.data.startswith("rejc_"):
+        pid = call.data.split("_")[1]
         with db_lock:
-            cursor.execute("DELETE FROM lottery")
+            cursor.execute("DELETE FROM pending WHERE id=?", (pid,))
             conn.commit()
-        bot.send_message(user_id,"🎯 Лотерея басталды! Қолданушылар 24 сағат ішінде қатыса алады.")
-        return
-
-    # Лотерея жеңімпазын таңдау
-    elif text=="🎖 Лотерея жеңімпазын таңдау":
-        with db_lock:
-            participants = cursor.execute("SELECT user_id FROM lottery").fetchall()
-            if not participants:
-                bot.send_message(user_id,"❌ Лотереяға қатысушылар жоқ.")
-                return
-            winner = random.choice(participants)[0]
-            cursor.execute("DELETE FROM lottery")
-            conn.commit()
-        bot.send_message(user_id,f"🎉 Жеңімпаз: {winner}!")
-        bot.send_message(winner,"🎊 Сіз лотереядан жеңдіңіз!")
-        return
-
-    # Топ 10 шақырғандар
-    elif text=="🏆 Топ 10 шақырғандар":
-        top10 = cursor.execute("SELECT invited_by, COUNT(*) as cnt FROM users WHERE invited_by IS NOT NULL GROUP BY invited_by ORDER BY cnt DESC LIMIT 10").fetchall()
-        msg_text = "🏆 Топ 10 шақырғандар:\n"
-        for u,cnt in top10: 
-            msg_text += f"{u}: {cnt} шақырды\n"
-        bot.send_message(user_id,msg_text)
-        return
-
-    # Статистика
-    elif text=="📊 Статистика":
-        users_count = cursor.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-        videos_count = cursor.execute("SELECT COUNT(*) FROM videos").fetchone()[0]
-        pending_count = cursor.execute("SELECT COUNT(*) FROM pending").fetchone()[0]
-        bot.send_message(user_id,f"📊 Статистика:\nҚолданушылар: {users_count}\nВидео: {videos_count}\nPending: {pending_count}")
-        return
-
-    # Рассылка
-    elif text=="📢 Рассылка":
-        bot.send_message(user_id,"Жіберілетін хабарламаны жіберіңіз:")
-        bot.register_next_step_handler(msg, handle_broadcast)
-        return
+        bot.edit_message_caption("❌ Бас тартылды", chat_id=ADMIN_ID, message_id=call.message.message_id)
+    
+    conn.close()
 
 # ---------------------------
 # MEDIA HANDLER
 # ---------------------------
-@bot.message_handler(func=lambda m: True)
-def handle_text(msg):
-    remove_old_pending()
-    user_id = msg.from_user.id
-    text = msg.text
+@bot.message_handler(content_types=['photo', 'video'])
+def media_handler(message):
+    user_id = message.from_user.id
+    is_video = message.content_type == 'video'
+    file_id = message.video.file_id if is_video else message.photo[-1].file_id
     
-    # Пайдаланушыны тексеру
-    u = cursor.execute("SELECT is_adult FROM users WHERE user_id=?", (user_id,)).fetchone()
-    if not u or u[0] != 1:
-        bot.send_message(user_id, "❌ Бұл бот тек 18+ пайдаланушыларға арналған.")
-        return
-    ensure_user(user_id)
+    path = save_media_file(file_id, is_video)
+    conn = get_db_connection()
+    with db_lock:
+        conn.execute("INSERT INTO pending (uploader_id, content_type, file_id, file_path, created_at) VALUES (?,?,?,?,?)",
+                     (user_id, 'video' if is_video else 'photo', file_id, path, datetime.utcnow().isoformat()))
+        conn.commit()
+    conn.close()
+    bot.send_message(user_id, "📩 Рақмет! Файл модерацияға жіберілді. Админ тексерген соң бонус аласыз.")
 
-    # --- БАРЛЫҚ ПАЙДАЛАНУШЫЛАРҒА АРНАЛҒАН БАТЫРМАЛАР ---
+# ---------------------------
+# MAIN TEXT HANDLER (ADMIN + USER)
+# ---------------------------
+@bot.message_handler(func=lambda m: True)
+def text_handler(message):
+    user_id = message.from_user.id
+    text = message.text
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # Тексеру
+    user_data = cursor.execute("SELECT is_adult, balance, progress_video FROM users WHERE user_id=?", (user_id,)).fetchone()
+    if not user_data:
+        ensure_user(user_id)
+        return
+    
+    if user_data[0] == 0:
+        bot.send_message(user_id, "⚠️ Алдымен /start басып, жасыңызды растаңыз.")
+        return
+
+    # --- ПАЙДАЛАНУШЫ ФУНКЦИЯЛАРЫ ---
     if text == "🎥 Видео көру":
         if not check_subscription(user_id):
-            bot.send_message(user_id, f"📢 Видео көру үшін {CHANNEL_USERNAME} каналына тіркеліңіз!")
+            bot.send_message(user_id, f"⚠️ Видео көру үшін алдымен каналымызға тіркеліңіз: {CHANNEL_USERNAME}")
             return
-        with db_lock:
-            res = cursor.execute("SELECT balance, progress_video FROM users WHERE user_id=?", (user_id,)).fetchone()
-            balance, progress = res
-            rows = cursor.execute("SELECT file_id, file_path FROM videos ORDER BY id ASC").fetchall()
-            if not rows:
-                bot.send_message(user_id, "🎬 Видеолар әзірге жоқ.")
-                return
-            if user_id != ADMIN_ID and balance < 2:
-                bot.send_message(user_id, "💸 Видео көру үшін 2 бонус қажет.")
-                return
-            idx = progress if progress < len(rows) else 0
-            file_id, file_path = rows[idx]
-            try:
-                if file_path and os.path.exists(file_path):
-                    with open(file_path, "rb") as f: bot.send_video(user_id, f)
-                else: bot.send_video(user_id, file_id)
-                cursor.execute("UPDATE users SET balance=?, progress_video=? WHERE user_id=?", (max(balance-2,0), idx+1, user_id))
-                conn.commit()
-            except:
-                bot.send_message(user_id, "❌ Видео жіберу кезінде қате шықты.")
-        return
+        
+        balance, progress = user_data[1], user_data[2]
+        if balance < 2 and user_id != ADMIN_ID:
+            bot.send_message(user_id, "❌ Кешіріңіз, видео көру үшін кемі 2💸 бонус керек.")
+            return
 
-    elif text == "➕ Видео/Фото жіберу":
-        bot.send_message(user_id, "📤 Файл жіберіңіз (Видео немесе Фото). Админ мақұлдаған соң сізге бонус беріледі.")
-        return
+        videos = cursor.execute("SELECT file_id, file_path FROM videos ORDER BY id ASC").fetchall()
+        if not videos:
+            bot.send_message(user_id, "😔 Әзірге видеолар жоқ. Кейінірек тексеріңіз.")
+            return
+
+        idx = progress if progress < len(videos) else 0
+        vid_id, vid_path = videos[idx]
+        
+        try:
+            bot.send_video(user_id, vid_id)
+            with db_lock:
+                new_bal = balance if user_id == ADMIN_ID else balance - 2
+                cursor.execute("UPDATE users SET balance=?, progress_video=? WHERE user_id=?", (new_bal, idx+1, user_id))
+                conn.commit()
+        except:
+            bot.send_message(user_id, "❌ Видео жіберуде қате шықты.")
 
     elif text == "💸 Мой бонус":
-        bal = cursor.execute("SELECT balance FROM users WHERE user_id=?", (user_id,)).fetchone()[0]
-        bot.send_message(user_id, f"💰 Сіздің балансыңыз: {bal}💸")
-        return
+        bot.send_message(user_id, f"💰 Сіздің балансыңыз: {user_data[1]}💸")
 
     elif text == "🔗 Реферал сілтеме":
-        bot.send_message(user_id, f"🔗 Сіздің реферал сілтемеңіз:\nhttps://t.me/KazHub_slivbot?start={user_id}\n\nӘр шақырылған адам үшін +6💸 аласыз!")
-        return
+        ref_link = f"https://t.me/{(bot.get_me().username)}?start={user_id}"
+        bot.send_message(user_id, f"🎁 Достарыңызды шақырып, бонус алыңыз!\n\nӘр дос үшін: +6💸\nСілтемеңіз: {ref_link}")
 
     elif text == "🛒 Магазин":
-        bot.send_message(user_id, f"🛒 Бонус сатып алу үшін: {SHOP_USERNAME}")
-        return
+        bot.send_message(user_id, f"🛍 Бонустар сатып алу үшін админге жазыңыз: {SHOP_USERNAME}")
 
     elif text == "ℹ️ Ақпарат":
-        bot.send_message(user_id, "ℹ️ Бот туралы:\n- 1 видео көру = 2💸\n- Видео жіберіп мақұлданса = 12💸\n- Дос шақырсаңыз = 6💸")
-        return
+        info_text = (
+            "📖 **Бот ережесі:**\n\n"
+            "- 1 видео көру = 2💸 бонус\n"
+            "- Дос шақыру = 6💸 бонус\n"
+            "- Видео жіберу = 12💸 бонус (мақұлданса)\n"
+            "- Барлық видеолар 18+ форматында."
+        )
+        bot.send_message(user_id, info_text, parse_mode="Markdown")
 
     elif text == "🎯 Лотереяға қатысу":
-        if not lottery_status():
-            bot.send_message(user_id, "❌ Лотерея әлі басталған жоқ.")
-            return
         with db_lock:
             exists = cursor.execute("SELECT 1 FROM lottery WHERE user_id=?", (user_id,)).fetchone()
             if exists:
-                bot.send_message(user_id, "⚠️ Сіз тізімде барсыз!")
-                return
-            cursor.execute("INSERT INTO lottery (user_id, joined_at) VALUES (?,?)", (user_id, datetime.utcnow().isoformat()))
-            conn.commit()
-        bot.send_message(user_id, "🎉 Сіз сәтті тіркелдіңіз!")
-        return
+                bot.send_message(user_id, "⚠️ Сіз лотереяға қатысып қойғансыз.")
+            else:
+                cursor.execute("INSERT INTO lottery (user_id, joined_at) VALUES (?, ?)", (user_id, datetime.utcnow().isoformat()))
+                conn.commit()
+                bot.send_message(user_id, "✅ Сіз лотерея қатысушыларының тізіміне қосылдыңыз!")
 
-    # --- ТЕК АДМИНГЕ АРНАЛҒАН БАТЫРМАЛАР ---
+    # --- АДМИН ФУНКЦИЯЛАРЫ ---
     if user_id == ADMIN_ID:
         if text == "✅ Pending файлдар":
-            pendings = cursor.execute("SELECT id,uploader_id,content_type,file_id,file_path FROM pending ORDER BY id ASC").fetchall()
+            pendings = cursor.execute("SELECT id, uploader_id, content_type, file_id FROM pending LIMIT 10").fetchall()
             if not pendings:
-                bot.send_message(user_id, "📭 Күтудегі файлдар жоқ.")
+                bot.send_message(ADMIN_ID, "📭 Күтудегі файлдар жоқ.")
                 return
-            for pid, uploader, ctype, file_id, file_path in pendings:
-                kb = InlineKeyboardMarkup()
-                kb.add(InlineKeyboardButton("✅ Мақұлдау", callback_data=f"approve_{pid}"),
-                       InlineKeyboardButton("❌ Растамау", callback_data=f"reject_{pid}"))
-                caption = f"ID: #{pid}\nЖіберуші: {uploader}\nТүрі: {ctype}"
-                try:
-                    if ctype == "video":
-                        if file_path and os.path.exists(file_path):
-                            with open(file_path, "rb") as f: bot.send_video(user_id, f, caption=caption, reply_markup=kb)
-                        else: bot.send_video(user_id, file_id, caption=caption, reply_markup=kb)
-                    else:
-                        if file_path and os.path.exists(file_path):
-                            with open(file_path, "rb") as f: bot.send_photo(user_id, f, caption=caption, reply_markup=kb)
-                        else: bot.send_photo(user_id, file_id, caption=caption, reply_markup=kb)
-                except: pass
-            return
+            for pid, uid, ctype, fid in pendings:
+                markup = InlineKeyboardMarkup()
+                markup.add(InlineKeyboardButton("✅ Мақұлдау", callback_data=f"appr_{pid}"),
+                           InlineKeyboardButton("❌ Бас тарту", callback_data=f"rejc_{pid}"))
+                if ctype == 'video':
+                    bot.send_video(ADMIN_ID, fid, caption=f"Жіберуші: {uid}", reply_markup=markup)
+                else:
+                    bot.send_photo(ADMIN_ID, fid, caption=f"Жіберуші: {uid}", reply_markup=markup)
 
         elif text == "📊 Статистика":
-            u_cnt = cursor.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-            v_cnt = cursor.execute("SELECT COUNT(*) FROM videos").fetchone()[0]
-            p_cnt = cursor.execute("SELECT COUNT(*) FROM pending").fetchone()[0]
-            bot.send_message(user_id, f"📊 Статистика:\n👥 Пайдаланушылар: {u_cnt}\n🎥 Видеолар: {v_cnt}\n⏳ Күтуде: {p_cnt}")
-            return
+            total_users = cursor.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+            total_vids = cursor.execute("SELECT COUNT(*) FROM videos").fetchone()[0]
+            total_pend = cursor.execute("SELECT COUNT(*) FROM pending").fetchone()[0]
+            bot.send_message(ADMIN_ID, f"📊 **Бот статистикасы:**\n\n👥 Юзерлер: {total_users}\n🎥 Видеолар: {total_vids}\n⏳ Күтуде: {total_pend}")
 
         elif text == "🎯 Лотерея бастау":
             with db_lock:
                 cursor.execute("DELETE FROM lottery")
                 conn.commit()
-            bot.send_message(user_id, "🎯 Жаңа лотерея басталды!")
-            return
+            bot.send_message(ADMIN_ID, "🎯 Лотерея тазаланды және жаңадан басталды!")
 
         elif text == "🎖 Лотерея жеңімпазын таңдау":
-            participants = cursor.execute("SELECT user_id FROM lottery").fetchall()
-            if not participants:
-                bot.send_message(user_id, "❌ Қатысушылар жоқ.")
-                return
-            winner = random.choice(participants)[0]
-            bot.send_message(user_id, f"🏆 Жеңімпаз ID: {winner}")
-            bot.send_message(winner, "🎊 Құттықтаймыз! Сіз лотереяда жеңдіңіз!")
-            return
+            users = cursor.execute("SELECT user_id FROM lottery").fetchall()
+            if not users:
+                bot.send_message(ADMIN_ID, "❌ Қатысушылар жоқ.")
+            else:
+                winner = random.choice(users)[0]
+                bot.send_message(ADMIN_ID, f"🏆 Жеңімпаз ID: {winner}")
+                try: bot.send_message(winner, "🎊 Құттықтаймыз! Сіз лотереяда жеңімпаз атандыңыз!")
+                except: pass
 
         elif text == "🏆 Топ 10 шақырғандар":
-            top = cursor.execute("SELECT invited_by, COUNT(*) as cnt FROM users WHERE invited_by IS NOT NULL GROUP BY invited_by ORDER BY cnt DESC LIMIT 10").fetchall()
-            res = "🏆 Үздік шақырушылар:\n"
-            for u, c in top: res += f"ID {u}: {c} адам\n"
-            bot.send_message(user_id, res)
-            return
+            top_referrals = cursor.execute("""
+                SELECT invited_by, COUNT(*) as count 
+                FROM users 
+                WHERE invited_by IS NOT NULL 
+                GROUP BY invited_by 
+                ORDER BY count DESC 
+                LIMIT 10
+            """).fetchall()
+            report = "🏆 **Ең көп адам шақырғандар:**\n\n"
+            for i, (uid, count) in enumerate(top_referrals, 1):
+                report += f"{i}. ID: `{uid}` — {count} адам\n"
+            bot.send_message(ADMIN_ID, report, parse_mode="Markdown")
 
         elif text == "📢 Рассылка":
-            bot.send_message(user_id, "📢 Хабарлама мәтінін жазыңыз:")
-            bot.register_next_step_handler(msg, handle_broadcast)
-            return
+            bot.send_message(ADMIN_ID, "📢 Барлық қолданушыларға жіберілетін мәтінді немесе файлды жіберіңіз:")
+            bot.register_next_step_handler(message, run_broadcast)
 
-        # Бонус беру тек "ID Мөлшері" форматында болса (мысалы: 6303091468 50)
-        elif " " in text:
+        elif text == "💰 Бонус беру":
+            bot.send_message(ADMIN_ID, "Жазыңыз: `ID Мөлшер` (Мысалы: `6303091468 100`)")
+
+        elif " " in text and text.replace(" ", "").isdigit():
             try:
                 parts = text.split()
-                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-                    t_id, amt = int(parts[0]), int(parts[1])
-                    cursor.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (amt, t_id))
+                target_id = int(parts[0])
+                amount = int(parts[1])
+                with db_lock:
+                    cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id=?", (amount, target_id))
                     conn.commit()
-                    bot.send_message(user_id, f"✅ {amt}💸 берілді.")
-                    bot.send_message(t_id, f"🎁 Админ сізге {amt}💸 бонус берді!")
+                bot.send_message(ADMIN_ID, f"✅ ID {target_id} пайдаланушыға {amount}💸 берілді.")
+                try: bot.send_message(target_id, f"🎁 Админ сізге {amount}💸 бонус берді!")
+                except: pass
             except: pass
-            return
 
-            # ---------------------------
-# CALLBACK HANDLER
-# ---------------------------
-@bot.callback_query_handler(func=lambda c: True)
-def handle_callbacks(call):
-    user_id = call.from_user.id
-    data = call.data
-
-    # 18+ тексеру
-    if data.startswith("adult_"):
-        if data == "adult_yes":
-            cursor.execute("UPDATE users SET is_adult=1 WHERE user_id=?", (user_id,))
-            conn.commit()
-            bot.send_message(user_id, "✅ Сіз 18+ ересектер ботқа қол жеткіздіңіз.",
-                             reply_markup=get_main_keyboard(admin=(user_id==ADMIN_ID), lottery_active=lottery_status()))
-        else:
-            cursor.execute("UPDATE users SET is_adult=0 WHERE user_id=?", (user_id,))
-            conn.commit()
-            bot.send_message(user_id, "❌ Бұл бот тек 18+ адамдарға арналған.")
-        return
-
-    # Pending файлдарды мақұлдау/кері қайтару
-    if data.startswith("approve_") or data.startswith("reject_"):
-        pid = int(data.split("_")[1])
-        with db_lock:
-            pending = cursor.execute("SELECT uploader_id, content_type, file_id, file_path FROM pending WHERE id=?", (pid,)).fetchone()
-            if not pending: return
-            uploader, ctype, file_id, file_path = pending
-            if data.startswith("approve_"):
-                if ctype == "video":
-                    cursor.execute("INSERT INTO videos (file_id,file_path,added_by,created_at) VALUES (?,?,?,?)",
-                                   (file_id, file_path, uploader, datetime.utcnow().isoformat()))
-                else:
-                    cursor.execute("INSERT INTO photos (file_id,file_path,added_by,created_at) VALUES (?,?,?,?)",
-                                   (file_id, file_path, uploader, datetime.utcnow().isoformat()))
-                bot.send_message(uploader, f"✅ Сіздің {ctype} файлыңыз мақұлданды! +12💸")
-                cursor.execute("UPDATE users SET balance=balance+12 WHERE user_id=?", (uploader,))
-            else:
-                bot.send_message(uploader, f"❌ Сіздің {ctype} файлыңыз мақұлданбады.")
-            cursor.execute("DELETE FROM pending WHERE id=?", (pid,))
-            conn.commit()
-        return
+    conn.close()
 
 # ---------------------------
-# BROADCAST HANDLER
+# BROADCAST LOGIC
 # ---------------------------
-def handle_broadcast(msg):
-    text = msg.text
-    with db_lock:
-        users = cursor.execute("SELECT user_id FROM users").fetchall()
+def run_broadcast(message):
+    conn = get_db_connection()
+    users = conn.execute("SELECT user_id FROM users").fetchall()
+    conn.close()
+    
+    success = 0
     for (uid,) in users:
         try:
-            bot.send_message(uid, text)
-        except: pass
+            if message.content_type == 'text':
+                bot.send_message(uid, message.text)
+            elif message.content_type == 'photo':
+                bot.send_photo(uid, message.photo[-1].file_id, caption=message.caption)
+            elif message.content_type == 'video':
+                bot.send_video(uid, message.video.file_id, caption=message.caption)
+            success += 1
+            time.sleep(0.1) # Блокқа түспеу үшін
+        except: continue
+    
+    bot.send_message(ADMIN_ID, f"📢 Рассылка аяқталды. {success} адамға жетті.")
 
 # ---------------------------
-# FLASK WEBHOOK
+# WEBHOOK SERVER
 # ---------------------------
-@app.route(f"/{BOT_TOKEN}", methods=["POST"])
-def webhook():
-    json_str = request.get_data().decode("utf-8")
-    update = telebot.types.Update.de_json(json_str)
+@app.route(f"/{BOT_TOKEN}", methods=['POST'])
+def get_update():
+    json_string = request.get_data().decode('utf-8')
+    update = telebot.types.Update.de_json(json_string)
     bot.process_new_updates([update])
-    return "ok", 200
+    return "!", 200
 
-# ---------------------------
-# BOT STARTER
-# ---------------------------
 if __name__ == "__main__":
-    # Webhook орнату
     bot.remove_webhook()
     bot.set_webhook(url=f"{WEBHOOK_URL}/{BOT_TOKEN}")
-    logger.info("Bot started with webhook.")
-    # Flask серверін іске қосу
     app.run(host="0.0.0.0", port=PORT)
