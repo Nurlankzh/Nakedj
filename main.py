@@ -1,3 +1,4 @@
+# main.py
 import os
 import logging
 import sqlite3
@@ -11,7 +12,7 @@ import random
 # ---------------------------
 # CONFIG
 # ---------------------------
-BOT_TOKEN = "7875991285:AAG4pChovJ67bxytVzB2-aIXrRYKUoWRtvw"  # Өз токеніңді қой
+BOT_TOKEN = "7875991285:AAG4pChovJ67bxytVzB2-aIXrRYKUoWRtvw"
 ADMIN_ID = 6303091468
 CHANNEL_USERNAME = "@kazakcombots"
 WEBHOOK_URL = "https://web-production-0cd8e.up.railway.app"
@@ -25,7 +26,6 @@ SHOP_USERNAME = "@KazHUBKZ"
 # ---------------------------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
-logger.info("Starting bot module...")
 
 # ---------------------------
 # Ensure folders
@@ -374,12 +374,15 @@ def handle_broadcast(msg):
     users = cursor.execute("SELECT user_id FROM users WHERE is_adult=1").fetchall()
     count = 0
     for u in users:
-        try: bot.send_message(u[0], text); count+=1
-        except: pass
-    bot.send_message(ADMIN_ID,f"Рассылка аяқталды. Жіберілді: {count} қолданушыға.")
+        try: 
+            bot.send_message(u[0], text)
+            count += 1
+        except: 
+            pass
+    bot.send_message(ADMIN_ID, f"📢 Рассылка аяқталды. Жіберілді: {count} қолданушыға.")
 
 # ---------------------------
-# WEBHOOK + FLASK (жалғасы)
+# WEBHOOK + FLASK
 # ---------------------------
 @app.route(f"/{BOT_TOKEN}", methods=['POST'])
 def webhook():
