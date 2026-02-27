@@ -10,7 +10,7 @@ from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMar
 # ---------------------------
 # CONFIG
 # ---------------------------
-BOT_TOKEN = os.getenv("BOT_TOKEN") or "8419149602:AAHvLF3XmreCAQpvJy_8-RRJDH0g_qy9Oto"
+BOT_TOKEN = os.getenv("BOT_TOKEN") or "7875991285:AAG4pChovJ67bxytVzB2-aIXrRYKUoWRtvw"
 ADMIN_ID = 6303091468
 CHANNEL_USERNAME = "@kazakcombots"
 WEBHOOK_URL = os.getenv("WEBHOOK_URL") or "https://web-production-0cd8e.up.railway.app"
@@ -234,7 +234,7 @@ def handle_text(msg):
 
     # Реферал
     elif text=="🔗 Реферал сілтеме":
-        bot.send_message(user_id, f"Сіздің реферал сілтеме: https://t.me/Sallemkz_bot?start={user_id}")
+        bot.send_message(user_id, f"Сіздің реферал сілтеме: https://t.me/KazHub_slivbot?start={user_id}")
         return
 
     # Магазин
