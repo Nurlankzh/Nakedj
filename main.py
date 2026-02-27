@@ -414,8 +414,8 @@ def handle_cb(call):
                                (file_id,file_path,user_id,datetime.utcnow().isoformat()))
             else:
                 cursor.execute("INSERT INTO photos (file_id,file_path,added_by,created_at) VALUES (?,?,?,?)",
-
-        (file_id,file_path,user_id,datetime.utcnow().isoformat()))
+                               (file_id,file_path,user_id,datetime.utcnow().isoformat()))
+            
             cursor.execute("UPDATE users SET balance=balance+12 WHERE user_id=?",(uploader_id,))
             cursor.execute("DELETE FROM pending WHERE id=?",(pid,))
             conn.commit()
