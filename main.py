@@ -492,3 +492,79 @@ def handle_text(msg):
                     bot.send_message(t_id, f"🎁 Админ сізге {amt}💸 бонус берді!")
             except: pass
             return
+
+            # ---------------------------
+# CALLBACK HANDLER
+# ---------------------------
+@bot.callback_query_handler(func=lambda c: True)
+def handle_callbacks(call):
+    user_id = call.from_user.id
+    data = call.data
+
+    # 18+ тексеру
+    if data.startswith("adult_"):
+        if data == "adult_yes":
+            cursor.execute("UPDATE users SET is_adult=1 WHERE user_id=?", (user_id,))
+            conn.commit()
+            bot.send_message(user_id, "✅ Сіз 18+ ересектер ботқа қол жеткіздіңіз.",
+                             reply_markup=get_main_keyboard(admin=(user_id==ADMIN_ID), lottery_active=lottery_status()))
+        else:
+            cursor.execute("UPDATE users SET is_adult=0 WHERE user_id=?", (user_id,))
+            conn.commit()
+            bot.send_message(user_id, "❌ Бұл бот тек 18+ адамдарға арналған.")
+        return
+
+    # Pending файлдарды мақұлдау/кері қайтару
+    if data.startswith("approve_") or data.startswith("reject_"):
+        pid = int(data.split("_")[1])
+        with db_lock:
+            pending = cursor.execute("SELECT uploader_id, content_type, file_id, file_path FROM pending WHERE id=?", (pid,)).fetchone()
+            if not pending: return
+            uploader, ctype, file_id, file_path = pending
+            if data.startswith("approve_"):
+                if ctype == "video":
+                    cursor.execute("INSERT INTO videos (file_id,file_path,added_by,created_at) VALUES (?,?,?,?)",
+                                   (file_id, file_path, uploader, datetime.utcnow().isoformat()))
+                else:
+                    cursor.execute("INSERT INTO photos (file_id,file_path,added_by,created_at) VALUES (?,?,?,?)",
+                                   (file_id, file_path, uploader, datetime.utcnow().isoformat()))
+                bot.send_message(uploader, f"✅ Сіздің {ctype} файлыңыз мақұлданды! +12💸")
+                cursor.execute("UPDATE users SET balance=balance+12 WHERE user_id=?", (uploader,))
+            else:
+                bot.send_message(uploader, f"❌ Сіздің {ctype} файлыңыз мақұлданбады.")
+            cursor.execute("DELETE FROM pending WHERE id=?", (pid,))
+            conn.commit()
+        return
+
+# ---------------------------
+# BROADCAST HANDLER
+# ---------------------------
+def handle_broadcast(msg):
+    text = msg.text
+    with db_lock:
+        users = cursor.execute("SELECT user_id FROM users").fetchall()
+    for (uid,) in users:
+        try:
+            bot.send_message(uid, text)
+        except: pass
+
+# ---------------------------
+# FLASK WEBHOOK
+# ---------------------------
+@app.route(f"/{BOT_TOKEN}", methods=["POST"])
+def webhook():
+    json_str = request.get_data().decode("utf-8")
+    update = telebot.types.Update.de_json(json_str)
+    bot.process_new_updates([update])
+    return "ok", 200
+
+# ---------------------------
+# BOT STARTER
+# ---------------------------
+if __name__ == "__main__":
+    # Webhook орнату
+    bot.remove_webhook()
+    bot.set_webhook(url=f"{WEBHOOK_URL}/{BOT_TOKEN}")
+    logger.info("Bot started with webhook.")
+    # Flask серверін іске қосу
+    app.run(host="0.0.0.0", port=PORT)
