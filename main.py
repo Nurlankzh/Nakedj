@@ -217,7 +217,7 @@ def handle_text(msg):
 
     # -------- Реферал --------
     elif text=="🔗 Реферал сілтеме":
-        bot.send_message(user_id,f"Сіздің реферал сілтеме: https://t.me/YourBot?start={user_id}"); return
+        bot.send_message(user_id,f"Сіздің реферал сілтеме: https://t.me/KazHubBot?start={user_id}"); return
 
     # -------- Магазин --------
     elif text=="🛒 Магазин":
