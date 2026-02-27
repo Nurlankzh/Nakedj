@@ -11,13 +11,14 @@ import random
 # ---------------------------
 # CONFIG
 # ---------------------------
-BOT_TOKEN = os.getenv("BOT_TOKEN") or "YOUR_BOT_TOKEN"
-ADMIN_ID = 123456789  # Сіз өз ID-ны қойыңыз
-CHANNEL_USERNAME = "@yourchannel"
-WEBHOOK_URL = os.getenv("WEBHOOK_URL") or "https://yourdomain.com"
+BOT_TOKEN = "7875991285:AAG4pChovJ67bxytVzB2-aIXrRYKUoWRtvw"  # Өз токеніңді қой
+ADMIN_ID = 6303091468
+CHANNEL_USERNAME = "@kazakcombots"
+WEBHOOK_URL = "https://web-production-0cd8e.up.railway.app"
 MEDIA_DIR = "media"
 DB_FILE = "data.db"
-PORT = int(os.getenv("PORT") or 10000)
+PORT = 10000
+SHOP_USERNAME = "@KazHUBKZ"
 
 # ---------------------------
 # Logging
@@ -51,8 +52,7 @@ with db_lock:
         progress_video INTEGER DEFAULT 0,
         invited_by INTEGER,
         is_adult INTEGER DEFAULT 0
-    )
-    """)
+    )""")
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS pending (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -61,8 +61,7 @@ with db_lock:
         file_id TEXT,
         file_path TEXT,
         created_at TEXT
-    )
-    """)
+    )""")
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS videos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -70,8 +69,7 @@ with db_lock:
         file_path TEXT,
         added_by INTEGER,
         created_at TEXT
-    )
-    """)
+    )""")
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS photos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -79,14 +77,12 @@ with db_lock:
         file_path TEXT,
         added_by INTEGER,
         created_at TEXT
-    )
-    """)
+    )""")
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS lottery (
         user_id INTEGER PRIMARY KEY,
         joined_at TEXT
-    )
-    """)
+    )""")
     conn.commit()
 
 # ---------------------------
@@ -96,7 +92,7 @@ def ensure_user(user_id, invited_by=None):
     with db_lock:
         exists = cursor.execute("SELECT 1 FROM users WHERE user_id=?", (user_id,)).fetchone()
         if not exists:
-            cursor.execute("INSERT INTO users (user_id,balance,invited_by) VALUES (?,?,?)", (user_id, 3, invited_by))
+            cursor.execute("INSERT INTO users (user_id,balance,invited_by) VALUES (?,?,?)", (user_id,3,invited_by))
             conn.commit()
             if invited_by and invited_by != user_id:
                 cursor.execute("UPDATE users SET balance = balance + 6 WHERE user_id=?", (invited_by,))
@@ -111,10 +107,15 @@ def get_main_keyboard(admin=False, lottery_active=False):
     kb.row(KeyboardButton("🛒 Магазин"), KeyboardButton("ℹ️ Ақпарат"))
     if lottery_active: kb.row(KeyboardButton("🎯 Лотереяға қатысу"))
     if admin:
-        kb.row(KeyboardButton("💰 Бонус беру"), KeyboardButton("✅ Pending файлдар"),
-               KeyboardButton("📊 Статистика"), KeyboardButton("📢 Рассылка"),
-               KeyboardButton("🎯 Лотерея бастау"), KeyboardButton("🏆 Топ 10 шақырғандар"),
-               KeyboardButton("🎖 Лотерея жеңімпазын таңдау"))
+        kb.row(
+            KeyboardButton("💰 Бонус беру"),
+            KeyboardButton("✅ Pending файлдар"),
+            KeyboardButton("📊 Статистика"),
+            KeyboardButton("📢 Рассылка"),
+            KeyboardButton("🎯 Лотерея бастау"),
+            KeyboardButton("🏆 Топ 10 шақырғандар"),
+            KeyboardButton("🎖 Лотерея жеңімпазын таңдау")
+        )
     return kb
 
 def save_file(file_id, is_video=True):
@@ -122,7 +123,7 @@ def save_file(file_id, is_video=True):
     b = bot.download_file(file_info.file_path)
     ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
     ext = ".mp4" if is_video else ".jpg"
-    fname = f"{ts}_{file_id.replace('/', '_')}{ext}"
+    fname = f"{ts}_{file_id.replace('/','_')}{ext}"
     path = os.path.join(MEDIA_DIR, fname)
     with open(path,"wb") as f: f.write(b)
     return path
@@ -184,10 +185,11 @@ def handle_text(msg):
         return
     ensure_user(user_id)
 
-    # Видео көру
+    # -------- Видео көру --------
     if text=="🎥 Видео көру":
         if not check_subscription(user_id):
-            bot.send_message(user_id,f"📢 Видео көру үшін {CHANNEL_USERNAME} каналына тіркеліңіз!"); return
+            bot.send_message(user_id,f"📢 Видео көру үшін {CHANNEL_USERNAME} каналына тіркеліңіз!")
+            return
         with db_lock:
             balance,progress = cursor.execute("SELECT balance, progress_video FROM users WHERE user_id=?",(user_id,)).fetchone()
             rows = cursor.execute("SELECT file_id, file_path FROM videos ORDER BY id ASC").fetchall()
@@ -204,28 +206,28 @@ def handle_text(msg):
             conn.commit()
         return
 
-    # Видео/Фото жіберу
+    # -------- Видео/Фото жіберу --------
     elif text=="➕ Видео/Фото жіберу":
         bot.send_message(user_id,"Файл жіберіңіз. Админ мақұлдайды."); return
 
-    # Бонус
+    # -------- Бонус --------
     elif text=="💸 Мой бонус":
         bal = cursor.execute("SELECT balance FROM users WHERE user_id=?",(user_id,)).fetchone()[0]
         bot.send_message(user_id,f"Сізде қазір: {bal}💸"); return
 
-    # Реферал
+    # -------- Реферал --------
     elif text=="🔗 Реферал сілтеме":
         bot.send_message(user_id,f"Сіздің реферал сілтеме: https://t.me/YourBot?start={user_id}"); return
 
-    # Магазин
+    # -------- Магазин --------
     elif text=="🛒 Магазин":
-        bot.send_message(user_id,"Бонус сатып алғыңыз келсе: @YourShop жазыңыз."); return
+        bot.send_message(user_id,f"Бонус сатып алғыңыз келсе: {SHOP_USERNAME} жазыңыз."); return
 
-    # Ақпарат
+    # -------- Ақпарат --------
     elif text=="ℹ️ Ақпарат":
         bot.send_message(user_id,"Бот қалай жұмыс істейді:\n- Видео көру үшін бонус қажет\n- Видео/Фото жіберу админ арқылы\n- Реферал арқылы бонус\n- 18+ адамдарға арналған"); return
 
-    # Лотереяға қатысу
+    # -------- Лотереяға қатысу --------
     elif text=="🎯 Лотереяға қатысу":
         with db_lock:
             if not lottery_status(): bot.send_message(user_id,"Лотерея әлі басталмаған."); return
@@ -235,11 +237,11 @@ def handle_text(msg):
             conn.commit()
         bot.send_message(user_id,"🎉 Сіз Лотереяға қосылдыңыз!"); return
 
-    # Admin-only actions
+    # -------- Admin-only --------
     if user_id!=ADMIN_ID: return
 
-    # Бонус беру
-    if text.startswith("<user_id> <сома>") or " " in text:
+    # -------- Бонус беру --------
+    if " " in text:
         try:
             parts = text.split()
             target_id = int(parts[0])
@@ -251,7 +253,7 @@ def handle_text(msg):
         except: pass
         return
 
-    # Pending файлдар
+    # -------- Pending файлдар --------
     elif text=="✅ Pending файлдар":
         pendings = cursor.execute("SELECT id,uploader_id,content_type,file_id,file_path FROM pending ORDER BY id ASC").fetchall()
         if not pendings: bot.send_message(user_id,"Pending файлдар жоқ."); return
@@ -271,7 +273,7 @@ def handle_text(msg):
             except: pass
         return
 
-    # Статистика
+    # -------- Статистика --------
     elif text=="📊 Статистика":
         users_count = cursor.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         videos_count = cursor.execute("SELECT COUNT(*) FROM videos").fetchone()[0]
@@ -279,13 +281,13 @@ def handle_text(msg):
         bot.send_message(user_id,f"📊 Статистика:\nҚолданушылар: {users_count}\nВидео: {videos_count}\nPending: {pending_count}")
         return
 
-    # Рассылка
+    # -------- Рассылка --------
     elif text=="📢 Рассылка":
         bot.send_message(user_id,"Жіберілетін хабарламаны жіберіңіз:")
         bot.register_next_step_handler(msg, handle_broadcast)
         return
 
-    # Лотерея бастау
+    # -------- Лотерея бастау --------
     elif text=="🎯 Лотерея бастау":
         with db_lock:
             cursor.execute("DELETE FROM lottery")
@@ -293,7 +295,7 @@ def handle_text(msg):
         bot.send_message(user_id,"🎯 Лотерея басталды! Қолданушылар 24 сағат ішінде қатыса алады.")
         return
 
-    # Лотерея жеңімпазын таңдау
+    # -------- Лотерея жеңімпазын таңдау --------
     elif text=="🎖 Лотерея жеңімпазын таңдау":
         with db_lock:
             participants = cursor.execute("SELECT user_id FROM lottery").fetchall()
@@ -307,7 +309,7 @@ def handle_text(msg):
         bot.send_message(winner,"🎊 Сіз лотереядан жеңдіңіз!")
         return
 
-    # Топ 10 шақырғандар
+    # -------- Топ 10 шақырғандар --------
     elif text=="🏆 Топ 10 шақырғандар":
         top10 = cursor.execute("SELECT invited_by, COUNT(*) as cnt FROM users WHERE invited_by IS NOT NULL GROUP BY invited_by ORDER BY cnt DESC LIMIT 10").fetchall()
         msg_text = "🏆 Топ 10 шақырғандар:\n"
