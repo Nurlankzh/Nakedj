@@ -13,14 +13,17 @@ from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMar
 # CONFIGURATION (Баптаулар)
 # ==========================================
 
-BOT_TOKEN = "7875991285:AAG4pChovJ67bxytVzB2-aIXrRYKUoWRtvw"
+# Жаңа токен орнатылды
+BOT_TOKEN = "8651848810:AAHbKXJdu_xn0HUhqyTw5ECgETf6c2BxaOU"
 ADMIN_ID = 6303091468
 CHANNEL_USERNAME = "@uyatsizoqiga"
 WEBHOOK_URL = "https://web-production-0cd8e.up.railway.app"
 MEDIA_DIR = "media"
 DB_FILE = "data.db"
-PORT = int(os.environ.get("PORT", 10000)) # Railway үшін портты автоматты алу
-SHOP_USERNAME = "@KazHUBKZ"
+PORT = int(os.environ.get("PORT", 10000)) 
+
+# Магазин юзернеймі өзгертілді
+SHOP_USERNAME = "@Qazaqshaonimder"
 
 # Logging баптаулары
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -41,7 +44,6 @@ def get_db_connection():
     conn = sqlite3.connect(DB_FILE, check_same_thread=False)
     return conn
 
-# Мәліметтер базасын құру
 def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -95,7 +97,6 @@ def get_main_keyboard(user_id):
     kb.row(KeyboardButton("💸 Мой бонус"), KeyboardButton("🔗 Реферал сілтеме"))
     kb.row(KeyboardButton("🛒 Магазин"), KeyboardButton("ℹ️ Ақпарат"))
 
-    # Лотерея статусын тексеру (кестеде адам болса шығады)
     if lottery_status():  
         kb.row(KeyboardButton("🎯 Лотереяға қатысу"))  
       
@@ -281,7 +282,8 @@ def text_handler(message):
         bot.send_message(user_id, f"💰 Сіздің балансыңыз: {user_data[1]}💸")  
 
     elif text == "🔗 Реферал сілтеме":  
-        ref_link = f"https://t.me/{(bot.get_me().username)}?start={user_id}"  
+        # Реферал бот юзернеймі өзгертілді
+        ref_link = f"https://t.me/Qazaqsha_onimbot?start={user_id}"  
         bot.send_message(user_id, f"🎁 Достарыңызды шақырып, бонус алыңыз!\n\nӘр дос үшін: +6💸\nСілтемеңіз: {ref_link}")  
 
     elif text == "🛒 Магазин":  
@@ -400,7 +402,7 @@ def run_broadcast(message):
             elif message.content_type == 'video':  
                 bot.send_video(uid, message.video.file_id, caption=message.caption)  
             success += 1  
-            time.sleep(0.1) # Блокқа түспеу үшін  
+            time.sleep(0.1) 
         except: continue  
   
     bot.send_message(ADMIN_ID, f"📢 Рассылка аяқталды. {success} адамға жетті.")
@@ -420,4 +422,3 @@ if __name__ == "__main__":
     bot.remove_webhook()
     bot.set_webhook(url=f"{WEBHOOK_URL}/{BOT_TOKEN}")
     app.run(host="0.0.0.0", port=PORT)
-
