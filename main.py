@@ -1,194 +1,167 @@
 import asyncio
-import logging
-import random
-from datetime import datetime
-
 import aiosqlite
+import logging
+import os
+from datetime import datetime
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.utils import executor
-from aiogram.dispatcher.middlewares import BaseMiddleware
-from aiogram.dispatcher.handler import CancelHandler
 
-# ========== CONFIG ==========
-TOKEN = "6592332777:AAEGSbHq71W_X2DXwyXqrJcAqt-XSsHbqCk"
+--- CONFIG ---
+
+API_TOKEN = os.getenv('BOT_TOKEN', '6592332777:AAEGSbHq71W_X2DXwyXqrJcAqt-XSsHbqCk')
 ADMIN_ID = 6303091468
-DB_NAME = "bot.db"
-CHANNEL = "@your_channel"
-
-bot = Bot(TOKEN, parse_mode="HTML")
-dp = Dispatcher(bot, storage=MemoryStorage())
+CHANNEL_ID = "@QZSTOP"
+DB_PATH = "bot_v14_pro.db"
 
 logging.basicConfig(level=logging.INFO)
+bot = Bot(token=API_TOKEN, parse_mode="HTML")
+dp = Dispatcher(bot, storage=MemoryStorage())
 
-# ========== DB ==========
-class DB:
-    def __init__(self):
-        self.conn = None
+--- FSM STATES ---
 
-    async def connect(self):
-        self.conn = await aiosqlite.connect(DB_NAME)
-        self.conn.row_factory = aiosqlite.Row
+class AdminStates(StatesGroup):
+add_content_file = State()
+add_content_genre = State()
+ban_user = State()
+unban_user = State()
+broadcast_msg = State()
+search_user = State()
 
-        await self.conn.executescript("""
-        CREATE TABLE IF NOT EXISTS users(
-            id INTEGER PRIMARY KEY,
-            balance INTEGER DEFAULT 5,
-            banned INTEGER DEFAULT 0,
-            joined TEXT
-        );
+--- DATABASE MANAGER ---
 
-        CREATE TABLE IF NOT EXISTS content(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            file_id TEXT,
-            genre TEXT
-        );
-        """)
-        await self.conn.commit()
+class Database:
+def init(self):
+self.conn = None
 
-db = DB()
+async def connect(self):  
+    self.conn = await aiosqlite.connect(DB_PATH)  
+    self.conn.row_factory = aiosqlite.Row  
+    await self.conn.execute("PRAGMA journal_mode=WAL;")  
+    await self.init_tables()  
 
-# ========== FSM ==========
-class Admin(StatesGroup):
-    add_file = State()
-    add_genre = State()
-    broadcast = State()
-    ban = State()
+async def init_tables(self):  
+    async with self.conn:  
+        await self.conn.execute('''CREATE TABLE IF NOT EXISTS users (  
+            id INTEGER PRIMARY KEY, balance INTEGER DEFAULT 20,   
+            is_banned INTEGER DEFAULT 0, joined_at TEXT)''')  
+        await self.conn.execute('''CREATE TABLE IF NOT EXISTS contents (  
+            id INTEGER PRIMARY KEY AUTOINCREMENT, file_id TEXT,   
+            type TEXT, genre TEXT, views INTEGER DEFAULT 0)''')  
+        await self.conn.execute('''CREATE TABLE IF NOT EXISTS history (  
+            user_id INTEGER, content_id INTEGER,  
+            PRIMARY KEY (user_id, content_id))''')  
+    logging.info("PRO Database Loaded.")
 
-# ========== ANTI FLOOD ==========
-class Flood(BaseMiddleware):
-    def __init__(self):
-        self.last = {}
-        super().__init__()
+db_manager = Database()
 
-    async def on_process_message(self, msg: types.Message, data: dict):
-        uid = msg.from_user.id
-        now = asyncio.get_event_loop().time()
+--- ADMIN PANEL KEYBOARD ---
 
-        if uid in self.last and now - self.last[uid] < 0.5:
-            await msg.reply("⏳ Тым жылдам")
-            raise CancelHandler()
+def get_admin_kb():
+kb = types.InlineKeyboardMarkup(row_width=2)
+kb.add(types.InlineKeyboardButton("➕ Контент қосу", callback_data="adm_add"),
+types.InlineKeyboardButton("📢 Рассылка", callback_data="adm_bc"))
+kb.add(types.InlineKeyboardButton("🚫 Бан", callback_data="adm_ban"),
+types.InlineKeyboardButton("🔓 Разбан", callback_data="adm_unban"))
+kb.add(types.InlineKeyboardButton("🔍 Юзер іздеу", callback_data="adm_search"),
+types.InlineKeyboardButton("📊 Статистика", callback_data="adm_stats"))
+return kb
 
-        self.last[uid] = now
+--- ADMIN HANDLERS ---
 
-dp.middleware.setup(Flood())
+@dp.message_handler(lambda m: m.text == "⚙️ Админ Панель" and m.from_user.id == ADMIN_ID)
+async def admin_entry(message: types.Message):
+await message.answer("👑 <b>PRO Admin Panel V14</b>\nБасқару жүйесіне қош келдіңіз!", reply_markup=get_admin_kb())
 
-# ========== HELP ==========
-async def check_sub(uid):
-    try:
-        m = await bot.get_chat_member(CHANNEL, uid)
-        return m.status not in ["left", "kicked"]
-    except:
-        return True
+1. 📊 STATISTICS (FULL LOGIC)
 
-# ========== UI ==========
-def kb(uid):
-    k = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    k.add("🎬 Көру", "👤 Профиль")
-    if uid == ADMIN_ID:
-        k.add("⚙️ Admin")
-    return k
+@dp.callback_query_handler(lambda c: c.data == "adm_stats", user_id=ADMIN_ID)
+async def adm_stats(callback: types.CallbackQuery):
+async with db_manager.conn.execute("SELECT COUNT() FROM users") as cur: u_total = (await cur.fetchone())[0]
+async with db_manager.conn.execute("SELECT COUNT() FROM users WHERE is_banned=1") as cur: u_banned = (await cur.fetchone())[0]
+async with db_manager.conn.execute("SELECT SUM(views) FROM contents") as cur: total_views = (await cur.fetchone())[0] or 0
+async with db_manager.conn.execute("SELECT genre, COUNT(*) as c FROM contents GROUP BY genre") as cur:
+genres = await cur.fetchall()
+g_txt = "\n".join([f"🔹 {g['genre']}: {g['c']} файл" for g in genres])
 
-# ========== START ==========
-@dp.message_handler(commands=['start'])
-async def start(m):
-    uid = m.from_user.id
+txt = (f"📊 <b>Толық статистика:</b>\n\n"  
+       f"👥 Юзерлер: {u_total} (🚫 Банда: {u_banned})\n"  
+       f"👁 Жалпы көрілім: {total_views}\n\n"  
+       f"📦 База құрамы:\n{g_txt if g_txt else 'Бос'}")  
+await callback.message.edit_text(txt, reply_markup=get_admin_kb())
 
-    await db.conn.execute(
-        "INSERT OR IGNORE INTO users(id, joined) VALUES(?,?)",
-        (uid, datetime.now().isoformat())
-    )
-    await db.conn.commit()
+2. 📢 BROADCAST (MESSAGING SYSTEM)
 
-    await m.answer("🚀 BOT READY", reply_markup=kb(uid))
+@dp.callback_query_handler(lambda c: c.data == "adm_bc", user_id=ADMIN_ID)
+async def adm_bc_start(callback: types.CallbackQuery):
+await AdminStates.broadcast_msg.set()
+await callback.message.answer("📢 Рассылка жасау үшін хабарлама жіберіңіз (мәтін, фото немесе видео):")
 
-# ========== PROFILE ==========
-@dp.message_handler(lambda m: m.text == "👤 Профиль")
-async def profile(m):
-    u = await db.conn.execute_fetchone("SELECT * FROM users WHERE id=?", (m.from_user.id,))
-    await m.answer(f"ID: {u['id']}\nBalance: {u['balance']}")
+@dp.message_handler(state=AdminStates.broadcast_msg, content_types=['text', 'photo', 'video'], user_id=ADMIN_ID)
+async def adm_bc_execute(message: types.Message, state: FSMContext):
+async with db_manager.conn.execute("SELECT id FROM users") as cur: users = await cur.fetchall()
+await state.finish()
 
-# ========== CONTENT ==========
-@dp.message_handler(lambda m: m.text == "🎬 Көру")
-async def watch(m):
-    if not await check_sub(m.from_user.id):
-        return await m.answer("Subscribe first")
+count, errors = 0, 0  
+status_msg = await message.answer(f"⏳ Рассылка басталды... (0/{len(users)})")  
 
-    kb = types.InlineKeyboardMarkup()
-    for g in ["Action", "Movie", "Comedy"]:
-        kb.add(types.InlineKeyboardButton(g, callback_data=f"g_{g}"))
+for u in users:  
+    try:  
+        await message.copy_to(u['id'])  
+        count += 1  
+        if count % 20 == 0: await status_msg.edit_text(f"⏳ Жіберілуде... ({count}/{len(users)})")  
+    except: errors += 1  
+    await asyncio.sleep(0.05) # Anti-flood  
 
-    await m.answer("Genre:", reply_markup=kb)
+await message.answer(f"✅ <b>Рассылка аяқталды!</b>\n📥 Сәтті: {count}\n❌ Қате: {errors}")
 
-@dp.callback_query_handler(lambda c: c.data.startswith("g_"))
-async def get(c):
-    genre = c.data.split("_")[1]
+3. 🚫 BAN SYSTEM (LOGIC ADDED)
 
-    u = await db.conn.execute_fetchone(
-        "SELECT balance FROM users WHERE id=?", (c.from_user.id,)
-    )
+@dp.callback_query_handler(lambda c: c.data == "adm_ban", user_id=ADMIN_ID)
+async def adm_ban_start(callback: types.CallbackQuery):
+await AdminStates.ban_user.set()
+await callback.message.answer("🚫 Банға салатын қолданушының ID-ін жіберіңіз:")
 
-    if u["balance"] <= 0:
-        return await c.answer("No balance", show_alert=True)
+@dp.message_handler(state=AdminStates.ban_user, user_id=ADMIN_ID)
+async def adm_ban_exec(message: types.Message, state: FSMContext):
+if not message.text.isdigit(): return await message.answer("❌ ID тек сандардан тұруы керек!")
+uid = int(message.text)
+async with db_manager.conn:
+await db_manager.conn.execute("UPDATE users SET is_banned = 1 WHERE id = ?", (uid,))
+await state.finish()
+await message.answer(f"✅ Юзер {uid} бұғатталды.")
 
-    content = await db.conn.execute_fetchone(
-        "SELECT * FROM content WHERE genre=? ORDER BY RANDOM() LIMIT 1",
-        (genre,)
-    )
+4. ➕ ADD CONTENT (STABLE)
 
-    if not content:
-        return await c.answer("Empty")
+@dp.callback_query_handler(lambda c: c.data == "adm_add", user_id=ADMIN_ID)
+async def adm_add_start(callback: types.CallbackQuery):
+await AdminStates.add_content_file.set()
+await callback.message.answer("📹 Файл жіберіңіз (Video/Photo):")
 
-    await db.conn.execute(
-        "UPDATE users SET balance=balance-1 WHERE id=?",
-        (c.from_user.id,)
-    )
-    await db.conn.commit()
+@dp.message_handler(state=AdminStates.add_content_file, content_types=['video', 'photo'], user_id=ADMIN_ID)
+async def adm_add_file(message: types.Message, state: FSMContext):
+fid = message.video.file_id if message.video else message.photo[-1].file_id
+ftype = "video" if message.video else "photo"
+await state.update_data(fid=fid, ftype=ftype)
+await AdminStates.add_content_genre.set()
+await message.answer("📝 Жанрын енгізіңіз:")
 
-    await bot.send_video(c.from_user.id, content["file_id"])
-    await c.answer("OK")
+@dp.message_handler(state=AdminStates.add_content_genre, user_id=ADMIN_ID)
+async def adm_add_genre(message: types.Message, state: FSMContext):
+data = await state.get_data()
+async with db_manager.conn:
+await db_manager.conn.execute("INSERT INTO contents (file_id, type, genre) VALUES (?, ?, ?)",
+(data['fid'], data['ftype'], message.text))
+await state.finish()
+await message.answer("✅ Контент сақталды!")
 
-# ========== ADMIN ==========
-@dp.message_handler(lambda m: m.text == "⚙️ Admin", user_id=ADMIN_ID)
-async def admin(m):
-    kb = types.InlineKeyboardMarkup()
-    kb.add(
-        types.InlineKeyboardButton("➕ Add", callback_data="add"),
-        types.InlineKeyboardButton("📢 BC", callback_data="bc"),
-        types.InlineKeyboardButton("🚫 Ban", callback_data="ban")
-    )
-    await m.answer("ADMIN", reply_markup=kb)
+--- STARTUP ---
 
-@dp.callback_query_handler(lambda c: c.data == "add", user_id=ADMIN_ID)
-async def add(c):
-    await Admin.add_file.set()
-    await c.message.answer("Send video")
+async def on_startup(_):
+await db_manager.connect()
+print("PRO ADMIN PANEL V14 ACTIVE")
 
-@dp.message_handler(content_types=['video'], state=Admin.add_file)
-async def save(m, state):
-    await state.update_data(fid=m.video.file_id)
-    await Admin.add_genre.set()
-    await m.answer("Genre?")
-
-@dp.message_handler(state=Admin.add_genre)
-async def save2(m, state):
-    d = await state.get_data()
-
-    await db.conn.execute(
-        "INSERT INTO content(file_id, genre) VALUES(?,?)",
-        (d["fid"], m.text)
-    )
-    await db.conn.commit()
-
-    await state.finish()
-    await m.answer("Saved")
-
-# ========== STARTUP ==========
-async def on_start(_):
-    await db.connect()
-    print("ONLINE")
-
-if __name__ == "__main__":
-    executor.start_polling(dp, skip_updates=True, on_startup=on_start)
+if name == "main":
+executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
