@@ -1,212 +1,194 @@
 import asyncio
 import logging
-import os
 import random
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import aiosqlite
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
-from aiogram.dispatcher.middlewares import BaseMiddleware
-from aiogram.dispatcher.handler import CancelHandler, current_handler
 from aiogram.utils import executor
-from aiogram.utils.exceptions import Throttled, BadRequest
+from aiogram.dispatcher.middlewares import BaseMiddleware
+from aiogram.dispatcher.handler import CancelHandler
 
-# ================= CONFIG =================
-API_TOKEN = "6592332777:AAEGSbHq71W_X2DXwyXqrJcAqt-XSsHbqCk"
+# ========== CONFIG ==========
+TOKEN = "6592332777:AAEGSbHq71W_X2DXwyXqrJcAqt-XSsHbqCk"
 ADMIN_ID = 6303091468
-CHANNEL = "@QZSTOP"
-DB_PATH = "enterprise_core.db"
+DB_NAME = "bot.db"
+CHANNEL = "@your_channel"
+
+bot = Bot(TOKEN, parse_mode="HTML")
+dp = Dispatcher(bot, storage=MemoryStorage())
 
 logging.basicConfig(level=logging.INFO)
 
-bot = Bot(token=API_TOKEN, parse_mode="HTML")
-dp = Dispatcher(bot, storage=MemoryStorage())
-
-# ================= DATABASE LAYER =================
+# ========== DB ==========
 class DB:
     def __init__(self):
-        self.db = None
+        self.conn = None
 
     async def connect(self):
-        self.db = await aiosqlite.connect(DB_PATH, isolation_level=None)
-        self.db.row_factory = aiosqlite.Row
+        self.conn = await aiosqlite.connect(DB_NAME)
+        self.conn.row_factory = aiosqlite.Row
 
-        await self.db.executescript("""
+        await self.conn.executescript("""
         CREATE TABLE IF NOT EXISTS users(
             id INTEGER PRIMARY KEY,
-            balance INTEGER DEFAULT 10,
+            balance INTEGER DEFAULT 5,
             banned INTEGER DEFAULT 0,
-            last_bonus TEXT
+            joined TEXT
         );
 
         CREATE TABLE IF NOT EXISTS content(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             file_id TEXT,
-            genre TEXT,
-            views INTEGER DEFAULT 0
-        );
-
-        CREATE TABLE IF NOT EXISTS history(
-            user_id INTEGER,
-            content_id INTEGER
+            genre TEXT
         );
         """)
+        await self.conn.commit()
 
 db = DB()
 
-# ================= SECURITY MIDDLEWARE =================
-class AntiFlood(BaseMiddleware):
-    def __init__(self): super().__init__()
+# ========== FSM ==========
+class Admin(StatesGroup):
+    add_file = State()
+    add_genre = State()
+    broadcast = State()
+    ban = State()
 
-    async def on_process_message(self, message, data):
-        handler = current_handler.get()
-        if not handler: return
+# ========== ANTI FLOOD ==========
+class Flood(BaseMiddleware):
+    def __init__(self):
+        self.last = {}
+        super().__init__()
 
-        try:
-            await dp.throttle("global", rate=0.7)
-        except Throttled:
-            await message.reply("⏳ Жылдамдық тым жоғары!")
+    async def on_process_message(self, msg: types.Message, data: dict):
+        uid = msg.from_user.id
+        now = asyncio.get_event_loop().time()
+
+        if uid in self.last and now - self.last[uid] < 0.5:
+            await msg.reply("⏳ Тым жылдам")
             raise CancelHandler()
 
-dp.middleware.setup(AntiFlood())
+        self.last[uid] = now
 
-# ================= CORE HELPERS =================
-async def check_subscription(uid: int):
+dp.middleware.setup(Flood())
+
+# ========== HELP ==========
+async def check_sub(uid):
     try:
         m = await bot.get_chat_member(CHANNEL, uid)
         return m.status not in ["left", "kicked"]
     except:
-        return True  # enterprise fallback
+        return True
 
-async def get_content(uid: int, genre: str):
-    # ZERO duplication + fast random
-    q = """
-    SELECT * FROM content
-    WHERE genre=? AND id NOT IN (
-        SELECT content_id FROM history WHERE user_id=?
-    )
-    ORDER BY RANDOM()
-    LIMIT 1
-    """
-    async with db.db.execute(q, (genre, uid)) as cur:
-        return await cur.fetchone()
+# ========== UI ==========
+def kb(uid):
+    k = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    k.add("🎬 Көру", "👤 Профиль")
+    if uid == ADMIN_ID:
+        k.add("⚙️ Admin")
+    return k
 
-# ================= FSM =================
-class AdminState(StatesGroup):
-    add_file = State()
-    add_genre = State()
-    broadcast = State()
-    ban_user = State()
-
-# ================= USER SYSTEM =================
-@dp.message_handler(commands=["start"])
-async def start(m: types.Message):
+# ========== START ==========
+@dp.message_handler(commands=['start'])
+async def start(m):
     uid = m.from_user.id
 
-    await db.db.execute(
-        "INSERT OR IGNORE INTO users(id) VALUES(?)",
-        (uid,)
+    await db.conn.execute(
+        "INSERT OR IGNORE INTO users(id, joined) VALUES(?,?)",
+        (uid, datetime.now().isoformat())
     )
+    await db.conn.commit()
 
-    await db.db.commit()
+    await m.answer("🚀 BOT READY", reply_markup=kb(uid))
 
-    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.add("🎬 Контент", "👤 Профиль", "🎁 Бонус")
-    if uid == ADMIN_ID:
-        kb.add("⚙️ Admin")
-
-    await m.answer("🚀 ENTERPRISE CORE ACTIVE", reply_markup=kb)
-
-# ================= PROFILE =================
+# ========== PROFILE ==========
 @dp.message_handler(lambda m: m.text == "👤 Профиль")
 async def profile(m):
-    async with db.db.execute("SELECT * FROM users WHERE id=?", (m.from_user.id,)) as c:
-        u = await c.fetchone()
+    u = await db.conn.execute_fetchone("SELECT * FROM users WHERE id=?", (m.from_user.id,))
+    await m.answer(f"ID: {u['id']}\nBalance: {u['balance']}")
 
-    await m.answer(
-        f"👤 ID: {u['id']}\n💰 Balance: {u['balance']}"
-    )
-
-# ================= CONTENT ENGINE =================
-@dp.message_handler(lambda m: m.text == "🎬 Контент")
-async def genres(m):
-    if not await check_subscription(m.from_user.id):
-        return await m.answer("❌ Каналға тіркеліңіз")
+# ========== CONTENT ==========
+@dp.message_handler(lambda m: m.text == "🎬 Көру")
+async def watch(m):
+    if not await check_sub(m.from_user.id):
+        return await m.answer("Subscribe first")
 
     kb = types.InlineKeyboardMarkup()
-    for g in ["Action", "Comedy", "Movie"]:
+    for g in ["Action", "Movie", "Comedy"]:
         kb.add(types.InlineKeyboardButton(g, callback_data=f"g_{g}"))
 
-    await m.answer("🎭 Жанр таңдаңыз:", reply_markup=kb)
+    await m.answer("Genre:", reply_markup=kb)
 
 @dp.callback_query_handler(lambda c: c.data.startswith("g_"))
-async def send(c):
-    uid = c.from_user.id
+async def get(c):
     genre = c.data.split("_")[1]
 
-    async with db.db.execute("SELECT balance FROM users WHERE id=?", (uid,)) as cur:
-        u = await cur.fetchone()
-        if not u or u["balance"] < 1:
-            return await c.answer("❌ Баланс жоқ", show_alert=True)
+    u = await db.conn.execute_fetchone(
+        "SELECT balance FROM users WHERE id=?", (c.from_user.id,)
+    )
 
-    content = await get_content(uid, genre)
+    if u["balance"] <= 0:
+        return await c.answer("No balance", show_alert=True)
+
+    content = await db.conn.execute_fetchone(
+        "SELECT * FROM content WHERE genre=? ORDER BY RANDOM() LIMIT 1",
+        (genre,)
+    )
 
     if not content:
-        return await c.answer("📭 Контент жоқ")
+        return await c.answer("Empty")
 
-    # atomic update
-    await db.db.execute("UPDATE users SET balance=balance-1 WHERE id=?", (uid,))
-    await db.db.execute("INSERT INTO history VALUES(?,?)", (uid, content["id"]))
-    await db.db.commit()
-
-    await bot.send_video(uid, content["file_id"])
-    await c.answer("✅ OK")
-
-# ================= BONUS SYSTEM =================
-@dp.message_handler(lambda m: m.text == "🎁 Бонус")
-async def bonus(m):
-    uid = m.from_user.id
-
-    async with db.db.execute("SELECT last_bonus FROM users WHERE id=?", (uid,)) as c:
-        u = await c.fetchone()
-
-    now = datetime.now()
-
-    if u and u["last_bonus"]:
-        last = datetime.fromisoformat(u["last_bonus"])
-        if now - last < timedelta(hours=24):
-            return await m.answer("⏳ 24 сағат күтіңіз")
-
-    await db.db.execute(
-        "UPDATE users SET balance=balance+5, last_bonus=? WHERE id=?",
-        (now.isoformat(), uid)
+    await db.conn.execute(
+        "UPDATE users SET balance=balance-1 WHERE id=?",
+        (c.from_user.id,)
     )
-    await db.db.commit()
+    await db.conn.commit()
 
-    await m.answer("🎁 +5 баланс")
+    await bot.send_video(c.from_user.id, content["file_id"])
+    await c.answer("OK")
 
-# ================= ADMIN PANEL =================
-@dp.message_handler(lambda m: m.text == "⚙️ Admin")
+# ========== ADMIN ==========
+@dp.message_handler(lambda m: m.text == "⚙️ Admin", user_id=ADMIN_ID)
 async def admin(m):
-    if m.from_user.id != ADMIN_ID:
-        return
-
     kb = types.InlineKeyboardMarkup()
     kb.add(
         types.InlineKeyboardButton("➕ Add", callback_data="add"),
-        types.InlineKeyboardButton("📊 Stats", callback_data="stats"),
+        types.InlineKeyboardButton("📢 BC", callback_data="bc"),
         types.InlineKeyboardButton("🚫 Ban", callback_data="ban")
     )
+    await m.answer("ADMIN", reply_markup=kb)
 
-    await m.answer("👑 ENTERPRISE ADMIN", reply_markup=kb)
+@dp.callback_query_handler(lambda c: c.data == "add", user_id=ADMIN_ID)
+async def add(c):
+    await Admin.add_file.set()
+    await c.message.answer("Send video")
 
-# ================= STARTUP =================
-async def on_startup(_):
+@dp.message_handler(content_types=['video'], state=Admin.add_file)
+async def save(m, state):
+    await state.update_data(fid=m.video.file_id)
+    await Admin.add_genre.set()
+    await m.answer("Genre?")
+
+@dp.message_handler(state=Admin.add_genre)
+async def save2(m, state):
+    d = await state.get_data()
+
+    await db.conn.execute(
+        "INSERT INTO content(file_id, genre) VALUES(?,?)",
+        (d["fid"], m.text)
+    )
+    await db.conn.commit()
+
+    await state.finish()
+    await m.answer("Saved")
+
+# ========== STARTUP ==========
+async def on_start(_):
     await db.connect()
-    print("ENTERPRISE CORE V1 RUNNING")
+    print("ONLINE")
 
 if __name__ == "__main__":
-    executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
+    executor.start_polling(dp, skip_updates=True, on_startup=on_start)
