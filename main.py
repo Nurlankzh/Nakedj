@@ -12,6 +12,7 @@ API_TOKEN = '6592332777:AAEGSbHq71W_X2DXwyXqrJcAqt-XSsHbqCk'
 ADMIN_ID = 6303091468
 CHANNEL_ID = "@QZSTOP" 
 DB_PATH = "bot_pro_v2.db"
+ADMIN_USERNAME = "@BratanBaken" # Бонус сатып алу үшін
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
@@ -23,8 +24,8 @@ class AdminStates(StatesGroup):
     wait_broadcast = State()
     wait_bonus_id = State()
     wait_bonus_amount = State()
-    upload_content = State() # Контент жүктеу
-    set_genre = State()      # Жанр таңдау
+    upload_content = State() 
+    set_genre = State()      
 
 class UserStates(StatesGroup):
     choosing_genre = State()
@@ -32,13 +33,11 @@ class UserStates(StatesGroup):
 # --- DATABASE INIT ---
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
-        # Users: balance, vip, referrer_id
         await db.execute('''CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY, balance INTEGER DEFAULT 0, 
             referrer INTEGER, is_vip INTEGER DEFAULT 0, 
             is_banned INTEGER DEFAULT 0, joined_at INTEGER
         )''')
-        # Content: жанр және VIP статусымен
         await db.execute('''CREATE TABLE IF NOT EXISTS contents (
             id INTEGER PRIMARY KEY AUTOINCREMENT, file_id TEXT, 
             type TEXT, genre TEXT, is_premium INTEGER DEFAULT 0
@@ -48,7 +47,7 @@ async def init_db():
 # --- KEYBOARDS ---
 def main_kb(uid):
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    kb.add("🎭 Жанр таңдау", "💎 VIP Сатып алу")
+    kb.add("🎭 Жанр таңдау", "💎 Бонус сатып алу")
     kb.add("👥 Реферал", "💰 Баланс")
     if uid == ADMIN_ID:
         kb.add("⚙️ Админ Панель")
@@ -57,8 +56,7 @@ def main_kb(uid):
 def admin_kb():
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     kb.add("📤 Контент жүктеу", "📢 Рассылка")
-    kb.add("📊 Статистика", "🎁 Бонус беру")
-    kb.add("🔙 Шығу")
+    kb.add("📊 Статистика", "🔙 Шығу")
     return kb
 
 def genre_kb():
@@ -67,17 +65,16 @@ def genre_kb():
            types.InlineKeyboardButton("🇷🇺 Русский", callback_data="genre_rus"))
     return kb
 
-# --- REFERRAL SYSTEM LOGIC ---
+# --- LOGIC ---
 async def add_user(uid, ref_id=None):
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("SELECT id FROM users WHERE id=?", (uid,)) as cur:
-            if await cur.fetchone(): return # Бар болса тиіспейміз
+            if await cur.fetchone(): return 
         
         await db.execute("INSERT INTO users (id, referrer, joined_at) VALUES (?, ?, ?)", 
                          (uid, ref_id, int(time.time())))
         
         if ref_id and ref_id != uid:
-            # Реферал үшін бонус (мысалы 10 бонус)
             await db.execute("UPDATE users SET balance = balance + 10 WHERE id=?", (ref_id,))
             try:
                 await bot.send_message(ref_id, "🎁 Сіздің сілтемеңізбен жаңа адам тіркелді! +10 бонус берілді.")
@@ -91,14 +88,30 @@ async def start(message: types.Message, state: FSMContext):
     args = message.get_args()
     ref_id = int(args) if args.isdigit() else None
     await add_user(message.from_user.id, ref_id)
-    
     await message.answer("🔥 Ең үздік контент ботына қош келдіңіз!", reply_markup=main_kb(message.from_user.id))
 
-# --- ADMIN: CONTENT UPLOAD SYSTEM ---
+# --- ADMIN PANEL ---
+@dp.message_handler(lambda m: m.text == "⚙️ Админ Панель" and m.from_user.id == ADMIN_ID)
+async def admin_panel(message: types.Message):
+    await message.answer("Қош келдіңіз, Админ!", reply_markup=admin_kb())
+
+@dp.message_handler(lambda m: m.text == "🔙 Шығу")
+async def back_to_main(message: types.Message):
+    await message.answer("Бас мәзір:", reply_markup=main_kb(message.from_user.id))
+
+# --- BONUS PURCHASE ---
+@dp.message_handler(lambda m: m.text == "💎 Бонус сатып алу")
+async def buy_bonuses(message: types.Message):
+    text = (f"💎 **Бонус сатып алу**\n\n"
+            f"Бонус арқылы жабық контенттерді көре аласыз.\n"
+            f"Сатып алу үшін админге жазыңыз: {ADMIN_USERNAME}")
+    await message.answer(text, parse_mode="Markdown")
+
+# --- CONTENT UPLOAD ---
 @dp.message_handler(lambda m: m.text == "📤 Контент жүктеу" and m.from_user.id == ADMIN_ID)
 async def admin_upload_start(message: types.Message):
     await AdminStates.upload_content.set()
-    await message.answer("Маған фото немесе видео жіберіңіз (бір файл):")
+    await message.answer("Маған фото немесе видео жіберіңіз:")
 
 @dp.message_handler(state=AdminStates.upload_content, content_types=['photo', 'video'])
 async def admin_upload_process(message: types.Message, state: FSMContext):
@@ -126,7 +139,7 @@ async def admin_upload_final(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.answer(f"✅ Сәтті сақталды! Жанр: {genre}")
     await state.finish()
 
-# --- USER: VIEW CONTENT BY GENRE ---
+# --- VIEW CONTENT ---
 @dp.message_handler(lambda m: m.text == "🎭 Жанр таңдау")
 async def user_genre_select(message: types.Message):
     await message.answer("Қай тілдегі контентті көргіңіз келеді?", reply_markup=genre_kb())
@@ -151,8 +164,8 @@ async def user_show_content(callback: types.CallbackQuery):
 # --- REFERRAL & BALANCE ---
 @dp.message_handler(lambda m: m.text == "👥 Реферал")
 async def referral_sys(message: types.Message):
-    bot_name = (await bot.get_me()).username
-    ref_link = f"https://t.me/{bot_name}?start={message.from_user.id}"
+    bot_info = await bot.get_me()
+    ref_link = f"https://t.me/{bot_info.username}?start={message.from_user.id}"
     await message.answer(f"🎁 Досыңды шақырып 10 бонус ал!\n\nСенің сілтемең:\n{ref_link}")
 
 @dp.message_handler(lambda m: m.text == "💰 Баланс")
@@ -162,7 +175,7 @@ async def check_balance(message: types.Message):
             row = await cur.fetchone()
     await message.answer(f"Сіздің балансыңыз: {row[0] if row else 0} бонус 💰")
 
-# --- ADMIN: STATISTICS ---
+# --- ADMIN: STATISTICS & BROADCAST ---
 @dp.message_handler(lambda m: m.text == "📊 Статистика" and m.from_user.id == ADMIN_ID)
 async def admin_stats(message: types.Message):
     async with aiosqlite.connect(DB_PATH) as db:
@@ -170,10 +183,8 @@ async def admin_stats(message: types.Message):
             total_users = (await cur.fetchone())[0]
         async with db.execute("SELECT COUNT(*) FROM contents") as cur:
             total_content = (await cur.fetchone())[0]
-            
-    await message.answer(f"📊 Бот статистикасы:\n\n👥 Пайдаланушылар: {total_users}\n🎬 Барлық контент: {total_content}")
+    await message.answer(f"📊 Статистика:\n\n👥 Пайдаланушылар: {total_users}\n🎬 Контент: {total_content}")
 
-# --- ADMIN: BROADCAST ---
 @dp.message_handler(lambda m: m.text == "📢 Рассылка" and m.from_user.id == ADMIN_ID)
 async def broadcast_init(message: types.Message):
     await AdminStates.wait_broadcast.set()
@@ -190,12 +201,11 @@ async def broadcast_run(message: types.Message, state: FSMContext):
         try:
             await message.copy_to(u[0])
             count += 1
-            await asyncio.sleep(0.05) # Rate-limit protection
+            await asyncio.sleep(0.05)
         except: pass
     
     await message.answer(f"Дайын! {count} адамға жіберілді.")
     await state.finish()
 
-# --- RUN ---
 if __name__ == "__main__":
     executor.start_polling(dp, skip_updates=True, on_startup=lambda _: init_db())
