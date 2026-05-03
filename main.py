@@ -9,7 +9,7 @@ from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.utils import executor
 
 # --- CONFIG ---
-API_TOKEN = "TOKEN_HERE"
+API_TOKEN = "6592332777:AAEGSbHq71W_X2DXwyXqrJcAqt-XSsHbqCk"
 ADMIN_ID = 6303091468
 CHANNEL = "@QZSTOP"
 DB = "enterprise.db"
