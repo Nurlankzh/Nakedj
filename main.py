@@ -1,89 +1,71 @@
 import asyncio
 import logging
-import random
 import time
+import random
 import aiosqlite
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
-from aiogram.dispatcher.middlewares import BaseMiddleware
-from aiogram.dispatcher.handler import CancelHandler
 from aiogram.utils import executor
-from aiogram.utils.exceptions import Throttled
 
-# --- CONFIG ---
 API_TOKEN = "6592332777:AAEGSbHq71W_X2DXwyXqrJcAqt-XSsHbqCk"
 ADMIN_ID = 6303091468
 CHANNEL = "@QZSTOP"
-DB = "enterprise.db"
-
-GENRES = ["🎬 Кино", "😂 Прикол", "🔥 Тренд", "🎌 Аниме", "📺 Сериал"]
+DB = "ultimate.db"
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN, parse_mode="HTML")
 dp = Dispatcher(bot, storage=MemoryStorage())
 
-# --- DB INIT ---
+# --- ЖАНРЛАР ---
+GENRES = {
+    "🎬 Қазақша": 5,
+    "🥵 Орысша": 4,
+    "🤭 Балалар": 6,
+    "😍 Американша": 3
+}
+
+# --- STATES ---
+class Upload(StatesGroup):
+    choose_genre = State()
+    wait_video = State()
+
+class Admin(StatesGroup):
+    give_money = State()
+
+# --- DB ---
 async def init_db():
     async with aiosqlite.connect(DB) as db:
         await db.execute("""
         CREATE TABLE IF NOT EXISTS users(
             id INTEGER PRIMARY KEY,
-            balance INTEGER DEFAULT 5,
-            ref INTEGER,
-            is_banned INTEGER DEFAULT 0,
-            joined INTEGER
-        )""")
-
+            balance INTEGER DEFAULT 10
+        )
+        """)
         await db.execute("""
         CREATE TABLE IF NOT EXISTS content(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             file_id TEXT,
             type TEXT,
-            genre TEXT,
-            views INTEGER DEFAULT 0
-        )""")
-
+            genre TEXT
+        )
+        """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS user_videos(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            file_id TEXT,
+            genre TEXT
+        )
+        """)
         await db.commit()
-
-# --- MIDDLEWARE ---
-class AntiFlood(BaseMiddleware):
-    async def on_process_message(self, message: types.Message, data):
-        try:
-            await dp.throttle("msg", rate=0.4)
-        except Throttled:
-            await message.answer("⚠️ Тез жазба")
-            raise CancelHandler()
-
-dp.middleware.setup(AntiFlood())
-
-# --- STATES ---
-class Admin(StatesGroup):
-    add_file = State()
-    add_genre = State()
-    broadcast = State()
-    ban = State()
-    unban = State()
-
-# --- UTILS ---
-async def get_user(uid):
-    async with aiosqlite.connect(DB) as db:
-        async with db.execute("SELECT * FROM users WHERE id=?", (uid,)) as cur:
-            return await cur.fetchone()
-
-async def check_sub(uid):
-    try:
-        m = await bot.get_chat_member(CHANNEL, uid)
-        return m.status != "left"
-    except:
-        return True
 
 # --- KEYBOARDS ---
 def main_kb(uid):
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.add("🎬 Контент", "👤 Профиль")
-    kb.add("💰 Баланс", "👥 Реферал")
+    kb.add("🎬 Контент", "💰 Баланс")
+    kb.add("👥 Реферал", "📤 Видео жіберу")
     if uid == ADMIN_ID:
         kb.add("⚙️ Админ")
     return kb
@@ -95,176 +77,150 @@ def genre_kb():
     kb.add("🔙 Артқа")
     return kb
 
-def admin_kb():
-    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.add("➕ Қосу", "📢 Рассылка")
-    kb.add("🚫 Бан", "🔓 Разбан")
-    kb.add("📊 Стат", "🔙 Артқа")
-    return kb
-
 # --- START ---
 @dp.message_handler(commands=['start'])
 async def start(m: types.Message):
-    uid = m.from_user.id
-    ref = m.get_args()
-
     async with aiosqlite.connect(DB) as db:
-        await db.execute("INSERT OR IGNORE INTO users(id, joined) VALUES (?,?)",
-                         (uid, int(time.time())))
-
-        if ref.isdigit():
-            await db.execute("UPDATE users SET balance = balance + 2 WHERE id=?", (ref,))
-
+        await db.execute("INSERT OR IGNORE INTO users(id) VALUES(?)",(m.from_user.id,))
         await db.commit()
 
-    await m.answer("👋 Қош келдің!", reply_markup=main_kb(uid))
+    await m.answer("👋 Қош келдің!", reply_markup=main_kb(m.from_user.id))
 
-# --- PROFILE ---
-@dp.message_handler(lambda m: m.text == "👤 Профиль")
-async def profile(m: types.Message):
-    u = await get_user(m.from_user.id)
-    await m.answer(f"🆔 {u[0]}\n💰 {u[1]} монета")
+# --- BACK ---
+@dp.message_handler(lambda m: m.text == "🔙 Артқа")
+async def back(m: types.Message):
+    await m.answer("🏠 Меню", reply_markup=main_kb(m.from_user.id))
 
 # --- BALANCE ---
 @dp.message_handler(lambda m: m.text == "💰 Баланс")
 async def balance(m: types.Message):
-    u = await get_user(m.from_user.id)
-    await m.answer(f"💰 {u[1]} монета")
+    async with aiosqlite.connect(DB) as db:
+        async with db.execute("SELECT balance FROM users WHERE id=?",(m.from_user.id,)) as cur:
+            b = await cur.fetchone()
+    await m.answer(f"💰 Баланс: {b[0]}")
 
 # --- REF ---
 @dp.message_handler(lambda m: m.text == "👥 Реферал")
 async def ref(m: types.Message):
     me = await bot.get_me()
     link = f"https://t.me/{me.username}?start={m.from_user.id}"
-    await m.answer(f"🔗 Сілтеме:\n{link}")
 
-# --- CONTENT MENU ---
+    txt = f"""👥 Реферал жүйесі:
+
+Дос шақырсаң → +6 монета аласың 💰
+
+Сенің сілтемең:
+{link}
+"""
+    await m.answer(txt)
+
+# --- CONTENT ---
 @dp.message_handler(lambda m: m.text == "🎬 Контент")
 async def content(m: types.Message):
-    if not await check_sub(m.from_user.id):
-        return await m.answer(f"Алдымен каналға тіркел: {CHANNEL}")
     await m.answer("Жанр таңда:", reply_markup=genre_kb())
 
-# --- SHOW CONTENT ---
 @dp.message_handler(lambda m: m.text in GENRES)
 async def show(m: types.Message):
-    uid = m.from_user.id
-    u = await get_user(uid)
-
-    if u[1] <= 0:
-        return await m.answer("Баланс жоқ")
+    price = GENRES[m.text]
 
     async with aiosqlite.connect(DB) as db:
-        async with db.execute(
-            "SELECT * FROM content WHERE genre=? ORDER BY RANDOM() LIMIT 1",
-            (m.text,)
-        ) as cur:
+        async with db.execute("SELECT balance FROM users WHERE id=?",(m.from_user.id,)) as cur:
+            b = await cur.fetchone()
+
+        if b[0] < price:
+            me = await bot.get_me()
+            link = f"https://t.me/{me.username}?start={m.from_user.id}"
+            return await m.answer(f"❌ Монета жетпейді!\nДос шақыр:\n{link}")
+
+        async with db.execute("SELECT * FROM content WHERE genre=? ORDER BY RANDOM() LIMIT 1",(m.text,)) as cur:
             c = await cur.fetchone()
 
         if not c:
             return await m.answer("Контент жоқ")
 
-        await db.execute("UPDATE users SET balance=balance-1 WHERE id=?", (uid,))
-        await db.execute("UPDATE content SET views=views+1 WHERE id=?", (c[0],))
+        await db.execute("UPDATE users SET balance=balance-? WHERE id=?",(price,m.from_user.id))
         await db.commit()
 
     if c[2] == "video":
-        await bot.send_video(uid, c[1])
+        await bot.send_video(m.chat.id, c[1])
     else:
-        await bot.send_photo(uid, c[1])
+        await bot.send_photo(m.chat.id, c[1])
 
+# --- USER VIDEO UPLOAD ---
+@dp.message_handler(lambda m: m.text == "📤 Видео жіберу")
+async def upload_start(m: types.Message):
+    await Upload.choose_genre.set()
+    await m.answer("Қай жанр?", reply_markup=genre_kb())
+
+@dp.message_handler(state=Upload.choose_genre)
+async def choose_genre(m: types.Message, state: FSMContext):
+    if m.text not in GENRES:
+        return
+    await state.update_data(genre=m.text)
+    await Upload.wait_video.set()
+    await m.answer("Видео жібер")
+
+@dp.message_handler(content_types=['video'], state=Upload.wait_video)
+async def upload_video(m: types.Message, state: FSMContext):
+    data = await state.get_data()
+    genre = data['genre']
+
+    async with aiosqlite.connect(DB) as db:
+        await db.execute("INSERT INTO user_videos(user_id,file_id,genre) VALUES(?,?,?)",
+                         (m.from_user.id, m.video.file_id, genre))
+        await db.commit()
+
+    await bot.send_message(ADMIN_ID, f"📥 Жаңа видео\nЖанр: {genre}\nUser: {m.from_user.id}")
+    await bot.send_video(ADMIN_ID, m.video.file_id)
+
+    await m.answer("✅ Жіберілді! Тағы жібересің бе?")
+    
 # --- ADMIN PANEL ---
 @dp.message_handler(lambda m: m.text == "⚙️ Админ", user_id=ADMIN_ID)
 async def admin(m: types.Message):
-    await m.answer("👑 Админ панель", reply_markup=admin_kb())
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.add("💸 Монета беру", "📊 Стат")
+    kb.add("📥 Видео көру", "🔙 Артқа")
+    await m.answer("👑 Админ панель", reply_markup=kb)
 
-# --- ADD CONTENT ---
-@dp.message_handler(lambda m: m.text == "➕ Қосу", user_id=ADMIN_ID)
-async def add_start(m: types.Message):
-    await Admin.add_file.set()
-    await m.answer("Файл жібер")
+# --- GIVE MONEY ---
+@dp.message_handler(lambda m: m.text == "💸 Монета беру", user_id=ADMIN_ID)
+async def give_money(m: types.Message):
+    await Admin.give_money.set()
+    await m.answer("ID және сумма жаз: 123456 10")
 
-@dp.message_handler(content_types=['video', 'photo'], state=Admin.add_file)
-async def add_file(m: types.Message, state: FSMContext):
-    fid = m.video.file_id if m.video else m.photo[-1].file_id
-    ftype = "video" if m.video else "photo"
-
-    await state.update_data(fid=fid, type=ftype)
-    await Admin.add_genre.set()
-    await m.answer("Жанр таңда:\n" + "\n".join(GENRES))
-
-@dp.message_handler(state=Admin.add_genre)
-async def add_done(m: types.Message, state: FSMContext):
-    data = await state.get_data()
-
+@dp.message_handler(state=Admin.give_money)
+async def give_money_do(m: types.Message, state: FSMContext):
+    uid, amount = m.text.split()
     async with aiosqlite.connect(DB) as db:
-        await db.execute("INSERT INTO content(file_id,type,genre) VALUES (?,?,?)",
-                         (data['fid'], data['type'], m.text))
+        await db.execute("UPDATE users SET balance=balance+? WHERE id=?",(amount,uid))
         await db.commit()
-
-    await m.answer("✅ Қосылды")
+    await m.answer("Берілді")
     await state.finish()
 
-# --- BROADCAST ---
-@dp.message_handler(lambda m: m.text == "📢 Рассылка", user_id=ADMIN_ID)
-async def bc(m: types.Message):
-    await Admin.broadcast.set()
-    await m.answer("Текст жібер")
-
-@dp.message_handler(state=Admin.broadcast)
-async def bc_run(m: types.Message, state: FSMContext):
+# --- ADMIN VIEW VIDEOS ---
+@dp.message_handler(lambda m: m.text == "📥 Видео көру", user_id=ADMIN_ID)
+async def view_videos(m: types.Message):
     async with aiosqlite.connect(DB) as db:
-        async with db.execute("SELECT id FROM users") as cur:
-            users = await cur.fetchall()
+        async with db.execute("SELECT DISTINCT genre FROM user_videos") as cur:
+            genres = await cur.fetchall()
 
-    for u in users:
-        try:
-            await bot.send_message(u[0], m.text)
-            await asyncio.sleep(0.05)
-        except:
-            pass
+    kb = types.InlineKeyboardMarkup()
+    for g in genres:
+        kb.add(types.InlineKeyboardButton(g[0], callback_data=f"view_{g[0]}"))
 
-    await m.answer("✅ Дайын")
-    await state.finish()
+    await m.answer("Жанр таңда:", reply_markup=kb)
 
-# --- BAN ---
-@dp.message_handler(lambda m: m.text == "🚫 Бан", user_id=ADMIN_ID)
-async def ban(m: types.Message):
-    await Admin.ban.set()
-    await m.answer("ID жаз")
+@dp.callback_query_handler(lambda c: c.data.startswith("view_"))
+async def show_admin_videos(c: types.CallbackQuery):
+    genre = c.data.split("_")[1]
 
-@dp.message_handler(state=Admin.ban)
-async def ban_do(m: types.Message, state: FSMContext):
     async with aiosqlite.connect(DB) as db:
-        await db.execute("UPDATE users SET is_banned=1 WHERE id=?", (m.text,))
-        await db.commit()
-    await m.answer("Бан берілді")
-    await state.finish()
+        async with db.execute("SELECT * FROM user_videos WHERE genre=?",(genre,)) as cur:
+            vids = await cur.fetchall()
 
-# --- UNBAN ---
-@dp.message_handler(lambda m: m.text == "🔓 Разбан", user_id=ADMIN_ID)
-async def unban(m: types.Message):
-    await Admin.unban.set()
-    await m.answer("ID жаз")
-
-@dp.message_handler(state=Admin.unban)
-async def unban_do(m: types.Message, state: FSMContext):
-    async with aiosqlite.connect(DB) as db:
-        await db.execute("UPDATE users SET is_banned=0 WHERE id=?", (m.text,))
-        await db.commit()
-    await m.answer("Разбан жасалды")
-    await state.finish()
-
-# --- STAT ---
-@dp.message_handler(lambda m: m.text == "📊 Стат", user_id=ADMIN_ID)
-async def stat(m: types.Message):
-    async with aiosqlite.connect(DB) as db:
-        async with db.execute("SELECT COUNT(*) FROM users") as cur:
-            users = (await cur.fetchone())[0]
-        async with db.execute("SELECT COUNT(*) FROM content") as cur:
-            cont = (await cur.fetchone())[0]
-
-    await m.answer(f"👥 {users}\n🎬 {cont}")
+    for v in vids:
+        await bot.send_video(ADMIN_ID, v[2], caption=f"User: {v[1]}")
 
 # --- RUN ---
 if __name__ == "__main__":
