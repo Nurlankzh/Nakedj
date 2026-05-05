@@ -502,8 +502,10 @@ async def scheduler():
                         except: pass
             await db.commit()
 
+async def on_startup(dp):
+    await init_db()
+    asyncio.create_task(scheduler())
+    print("Бот іске қосылды!")
+
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(init_db())
-    loop.create_task(scheduler())
-    executor.start_polling(dp, skip_updates=True)
+    executor.start_polling(dp, on_startup=on_startup, skip_updates=True)
