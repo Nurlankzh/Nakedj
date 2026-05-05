@@ -24,7 +24,7 @@ GENRES_CONFIG = {
     "🥵 Орысша": {"price": 4},
     "🤭 Балалар": {"price": 6},
     "😍 Американша": {"price": 3},
-    "😈 VIP Видео": {"price": 22} # VIP видео бағасы 22 монета
+    "😈 VIP Видео": {"price": 22}
 }
 GENRES = list(GENRES_CONFIG.keys())
 
@@ -83,6 +83,12 @@ def main_kb(uid):
     if uid == ADMIN_ID: kb.add("⚙️ Админ")
     return kb
 
+# --- GLOBAL BACK BUTTON HANDLER ---
+@dp.message_handler(lambda m: m.text == "🔙 Артқа", state="*")
+async def global_back(m: types.Message, state: FSMContext):
+    await state.finish()
+    await m.answer("Басты мәзірге қайттыңыз:", reply_markup=main_kb(m.from_user.id))
+
 # --- START ---
 @dp.message_handler(commands=['start'], state="*")
 async def start(m: types.Message, state: FSMContext):
@@ -119,7 +125,7 @@ async def check_subscription_callback(c: types.CallbackQuery):
 @dp.message_handler(lambda m: m.text == "💰 Монета беру", user_id=ADMIN_ID)
 async def adm_give_start(m: types.Message):
     await AdminStates.give_id.set()
-    await m.answer("Пайдаланушының <b>ID</b> нөмірін жазыңыз:")
+    await m.answer("Пайдаланушының <b>ID</b> нөмірін жазыңыз:", reply_markup=ReplyKeyboardMarkup(resize_keyboard=True).add("🔙 Артқа"))
 
 @dp.message_handler(state=AdminStates.give_id, user_id=ADMIN_ID)
 async def adm_give_id(m: types.Message, state: FSMContext):
@@ -138,7 +144,7 @@ async def adm_give_amount(m: types.Message, state: FSMContext):
         await db.execute("UPDATE users SET balance = balance + ? WHERE id=?", (amount, uid))
         await db.commit()
     
-    await m.answer(f"✅ ID: {uid} пайдаланушысына {amount} монета берілді!")
+    await m.answer(f"✅ ID: {uid} пайдаланушысына {amount} монета берілді!", reply_markup=main_kb(m.from_user.id))
     try: await bot.send_message(uid, f"🎁 Админ сізге {amount} монета берді!")
     except: pass
     await state.finish()
@@ -147,7 +153,7 @@ async def adm_give_amount(m: types.Message, state: FSMContext):
 @dp.message_handler(lambda m: m.text == "🌍 Барлығына монета", user_id=ADMIN_ID)
 async def adm_give_all_start(m: types.Message):
     await AdminStates.give_all_amount.set()
-    await m.answer("Барлық адамға қанша монетадан бересіз?")
+    await m.answer("Барлық адамға қанша монетадан бересіз?", reply_markup=ReplyKeyboardMarkup(resize_keyboard=True).add("🔙 Артқа"))
 
 @dp.message_handler(state=AdminStates.give_all_amount, user_id=ADMIN_ID)
 async def adm_give_all_process(m: types.Message, state: FSMContext):
@@ -156,7 +162,7 @@ async def adm_give_all_process(m: types.Message, state: FSMContext):
     async with aiosqlite.connect(DB) as db:
         await db.execute("UPDATE users SET balance = balance + ?", (amount,))
         await db.commit()
-    await m.answer(f"✅ Барлық пайдаланушыларға {amount} монета берілді!")
+    await m.answer(f"✅ Барлық пайдаланушыларға {amount} монета берілді!", reply_markup=main_kb(m.from_user.id))
     await state.finish()
 
 # --- ADMIN: ADD VIDEO (LOOP) ---
@@ -165,6 +171,7 @@ async def add_v_start(m: types.Message):
     await AdminStates.add_v_genre.set()
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
     for g in GENRES: kb.add(g)
+    kb.add("🔙 Артқа")
     await m.answer("Қай жанрға видео қосасыз?", reply_markup=kb)
 
 @dp.message_handler(state=AdminStates.add_v_genre, user_id=ADMIN_ID)
@@ -172,7 +179,7 @@ async def add_v_genre_pick(m: types.Message, state: FSMContext):
     if m.text not in GENRES: return await m.answer("Мәзірден таңдаңыз!")
     await state.update_data(genre=m.text)
     await AdminStates.add_v_file.set()
-    await m.answer(f"[{m.text}] жанрына видео жіберіңіз:", reply_markup=ReplyKeyboardRemove())
+    await m.answer(f"[{m.text}] жанрына видео жіберіңіз:", reply_markup=ReplyKeyboardMarkup(resize_keyboard=True).add("🔙 Артқа"))
 
 @dp.message_handler(state=AdminStates.add_v_file, content_types=['video'], user_id=ADMIN_ID)
 async def add_v_file_save(m: types.Message, state: FSMContext):
@@ -195,6 +202,7 @@ async def add_v_loop(c: types.CallbackQuery, state: FSMContext):
         await AdminStates.add_v_genre.set()
         kb = ReplyKeyboardMarkup(resize_keyboard=True)
         for g in GENRES: kb.add(g)
+        kb.add("🔙 Артқа")
         await c.message.answer("Қай жанрға қосасыз?", reply_markup=kb)
     else:
         await state.finish()
@@ -239,7 +247,7 @@ async def sub_decision(c: types.CallbackQuery):
 @dp.message_handler(lambda m: m.text == "📢 Рассылка", user_id=ADMIN_ID)
 async def adm_broadcast_start(m: types.Message):
     await AdminStates.broadcast_msg.set()
-    await m.answer("Жіберілетін текст немесе файлды жіберіңіз (Артқа қайту үшін кез келген текст жазып, state-ті тоқтатуға болады):")
+    await m.answer("Жіберілетін текст немесе файлды жіберіңіз:", reply_markup=ReplyKeyboardMarkup(resize_keyboard=True).add("🔙 Артқа"))
 
 @dp.message_handler(state=AdminStates.broadcast_msg, content_types=['any'], user_id=ADMIN_ID)
 async def adm_broadcast_process(m: types.Message, state: FSMContext):
@@ -254,7 +262,7 @@ async def adm_broadcast_process(m: types.Message, state: FSMContext):
             await asyncio.sleep(0.05)
         except: pass
     
-    await m.answer(f"✅ Рассылка {count} адамға жіберілді.")
+    await m.answer(f"✅ Рассылка {count} адамға жіберілді.", reply_markup=main_kb(m.from_user.id))
     await state.finish()
 
 # --- VIP CONTENT ---
@@ -324,10 +332,9 @@ async def get_video(m: types.Message):
     async with aiosqlite.connect(DB) as db:
         user = await (await db.execute("SELECT balance, vip_until FROM users WHERE id=?", (uid,))).fetchone()
         
-        # VIP Тексеру
         if "VIP" in genre:
             if user[1] == "None" or datetime.strptime(user[1], "%Y-%m-%d %H:%M") < datetime.now():
-                return await m.answer("❌ VIP уақытыңыз біткен!")
+                return await m.answer("❌ VIP уақытыңыз біткен немесе сатып алмағансыз!")
 
         if user[0] < config['price']:
             return await m.answer(f"⚠️ Баланс жеткіліксіз! Құны: {config['price']} монета.")
@@ -358,7 +365,7 @@ async def auto_delete(chat_id, msg_id, sec):
     try: await bot.delete_message(chat_id, msg_id)
     except: pass
 
-# --- OTHER FUNCTIONS ---
+# --- ADMIN PANEL ---
 @dp.message_handler(lambda m: m.text == "⚙️ Админ", user_id=ADMIN_ID)
 async def admin_panel(m: types.Message):
     kb = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
@@ -377,6 +384,7 @@ async def stat_view(m: types.Message):
     for v in vc: res += f"- {v[0]}: {v[1]} дана\n"
     await m.answer(res)
 
+# --- USER UPLOAD ---
 @dp.message_handler(lambda m: m.text == "➕ Видео жіберу")
 async def user_up_start(m: types.Message):
     await UserStates.upload_genre.set()
@@ -388,9 +396,6 @@ async def user_up_start(m: types.Message):
 
 @dp.message_handler(state=UserStates.upload_genre)
 async def user_up_genre(m: types.Message, state: FSMContext):
-    if m.text == "🔙 Артқа": 
-        await state.finish()
-        return await m.answer("Бас мәзір", reply_markup=main_kb(m.from_user.id))
     await state.update_data(g=m.text)
     await UserStates.upload_video.set()
     await m.answer("🎥 Видеоны жіберіңіз:", reply_markup=ReplyKeyboardMarkup(resize_keyboard=True).add("🔙 Артқа"))
@@ -402,10 +407,11 @@ async def user_up_file(m: types.Message, state: FSMContext):
         await db.execute("INSERT INTO submissions(file_id, genre, user_id) VALUES (?,?,?)",
                          (m.video.file_id, data['g'], m.from_user.id))
         await db.commit()
-    await m.answer("✅ Видео жіберілді! Админ тексеріп мақұлдаса, 12 монета аласыз.")
+    await m.answer("✅ Видео жіберілді! Админ мақұлдаса, 12 монета аласыз.", reply_markup=main_kb(m.from_user.id))
     await m.delete()
     await state.finish()
 
+# --- OTHER BUTTONS ---
 @dp.message_handler(lambda m: m.text == "💰 Баланс")
 async def show_balance(m: types.Message):
     async with aiosqlite.connect(DB) as db:
@@ -419,16 +425,14 @@ async def buy_moneta_info(m: types.Message):
 @dp.message_handler(lambda m: m.text == "👥 Реферал")
 async def ref_info(m: types.Message):
     link = f"https://t.me/{BOT_USER.replace('@','')}/?start={m.from_user.id}"
-    await m.answer(f"👥 Реферал жүйесі:\n\nДосыңыз сіздің сілтемеңізбен кірсе: <b>+6 монета</b> аласыз.\n\n🔗 Сілтемеңіз:\n<code>{link}</code>")
+    await m.answer(f"👥 Реферал жүйесі:\n\nДосыңыз сіздің сілтемеңізбен кірсе: <b>+6 монета</b> аласыз.\n\n🔗 Сілтемеңізіз:\n<code>{link}</code>")
 
 # --- AUTO DELETE UNKNOWN TEXT ---
 @dp.message_handler(content_types=['text'], state="*")
 async def clean_chat(m: types.Message, state: FSMContext):
-    # Егер пайдаланушы күйде (state) болса, текстті өшірмейміз
     curr_state = await state.get_state()
-    if curr_state is not None:
-        return
-    # Басты батырмалар емес текст жазса өшіру
+    if curr_state is not None: return
+    
     buttons = ["🎬 Контент", "➕ Видео жіберу", "💰 Баланс", "👥 Реферал", "💎 Монета сатып алу", "⚙️ Админ", "🔐 VIP контент", "🔙 Артқа", "😈 VIP видео 😈"]
     if m.text not in buttons and not m.text.startswith('/'):
         try: await m.delete()
