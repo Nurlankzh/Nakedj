@@ -7,6 +7,8 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
+from aiogram.dispatcher.middlewares import BaseMiddleware
+from aiogram.dispatcher.handler import CancelHandler
 from aiogram.utils import executor
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup
 from aiogram.utils.exceptions import BotBlocked, UserDeactivated, RetryAfter, TelegramAPIError
@@ -19,13 +21,13 @@ CHANNEL_ID = "@QZQCONTENT"
 BOT_USER = "@Yummybarbot"
 DB = "enterprise.db"
 
-# Жанрлар және бағалар
+# Жанрлар және бағалар (Смайликтер алынды, стандартты атаулар қойылды)
 GENRES_CONFIG = {
-    "🎬 Қазақша": {"price": 5},
-    "🥵 Орысша": {"price": 4},
-    "🤭 Балалар": {"price": 6},
-    "😍 Американша": {"price": 3},
-    "😈 VIP Видео": {"price": 22}
+    "🎬 Қазақша кинолар": {"price": 5},
+    "🎬 Орысша кинолар": {"price": 4},
+    "🧸 Балаларға арналған": {"price": 6},
+    "🎬 Шетелдік кинолар": {"price": 3},
+    "💎 VIP Контент": {"price": 22}
 }
 GENRES = list(GENRES_CONFIG.keys())
 
@@ -64,24 +66,25 @@ async def init_db():
         await db.execute("""CREATE TABLE IF NOT EXISTS history(
             user_id INTEGER, content_id INTEGER)""")
             
-        # Қайталанбас ID бағанын қосу (Дерекқор жаңаруы)
         try: await db.execute("ALTER TABLE content ADD COLUMN file_unique_id TEXT")
         except: pass
         try: await db.execute("ALTER TABLE submissions ADD COLUMN file_unique_id TEXT")
         except: pass
         
-        # Іздеуді жылдамдату үшін индекс жасау
         await db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_content_uniq ON content(file_unique_id)")
         await db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_subs_uniq ON submissions(file_unique_id)")
         
         await db.commit()
 
-# --- UTILS ---
+# --- UTILS & KEYBOARDS ---
 async def check_sub(uid):
+    if uid == ADMIN_ID:
+        return True
     try:
         member = await bot.get_chat_member(CHANNEL_ID, uid)
         return member.status != "left"
-    except: return True
+    except: 
+        return False # Қате шықса, тіркелмеген деп есептейміз
 
 def sub_kb():
     kb = InlineKeyboardMarkup(row_width=1)
@@ -96,6 +99,30 @@ def main_kb(uid):
     kb.add("💎 Монета сатып алу", "🔐 VIP контент")
     if uid == ADMIN_ID: kb.add("⚙️ Админ")
     return kb
+
+# --- MIDDLEWARE (МӘЖБҮРЛІ ТІРКЕЛУДІ ТЕКСЕРУ) ---
+class MandatorySubMiddleware(BaseMiddleware):
+    async def on_process_message(self, message: types.Message, data: dict):
+        if message.chat.type != 'private' or message.from_user.id == ADMIN_ID:
+            return
+        if message.text and message.text.startswith('/start'):
+            return # Start командасын өткізіп жібереміз, ол жақта бөлек тексеріледі
+            
+        if not await check_sub(message.from_user.id):
+            await message.answer("⚠️ <b>Кешіріңіз, сіз каналдан шығып кеткенсіз!</b>\nБотты ары қарай қолдану үшін біздің каналға міндетті түрде қайта тіркеліңіз:", reply_markup=sub_kb())
+            raise CancelHandler()
+
+    async def on_process_callback_query(self, call: types.CallbackQuery, data: dict):
+        if call.from_user.id == ADMIN_ID or call.data == "check_subscription":
+            return
+            
+        if not await check_sub(call.from_user.id):
+            await call.answer("❌ Сіз каналға тіркелмегенсіз!", show_alert=True)
+            await bot.send_message(call.from_user.id, "⚠️ <b>Ботты қолдану үшін каналға тіркеліңіз:</b>", reply_markup=sub_kb())
+            raise CancelHandler()
+
+# Middleware-ді қосу
+dp.middleware.setup(MandatorySubMiddleware())
 
 # --- GLOBAL BACK AND FINISH HANDLERS ---
 @dp.message_handler(lambda m: m.text == "🔙 Артқа", state="*")
@@ -136,7 +163,7 @@ async def start(m: types.Message, state: FSMContext):
         await db.commit()
 
     if not await check_sub(uid):
-        return await m.answer(f"👋 Сәлем! Ботты қолдану үшін каналға тіркеліңіз!", reply_markup=sub_kb())
+        return await m.answer("👋 Сәлем! Ботты қолдану үшін каналға міндетті түрде тіркеліңіз!", reply_markup=sub_kb())
     
     await m.answer("✅ Рұқсат берілді! Мәзірді қолданыңыз:", reply_markup=main_kb(uid))
 
@@ -144,9 +171,9 @@ async def start(m: types.Message, state: FSMContext):
 async def check_subscription_callback(c: types.CallbackQuery):
     if await check_sub(c.from_user.id):
         await c.message.delete()
-        await bot.send_message(c.from_user.id, "✅ Тіркелу сәтті өтті!", reply_markup=main_kb(c.from_user.id))
+        await bot.send_message(c.from_user.id, "✅ Тіркелу сәтті өтті! Басты мәзір ашылды.", reply_markup=main_kb(c.from_user.id))
     else:
-        await c.answer("❌ Каналға тіркелмедіңіз!", show_alert=True)
+        await c.answer("❌ Каналға әлі тіркелмедіңіз! Толық тіркеліңіз.", show_alert=True)
 
 # --- ADMIN: BULK ADD VIDEO ---
 @dp.message_handler(lambda m: m.text == "➕ Видео қосу", user_id=ADMIN_ID)
@@ -171,7 +198,6 @@ async def add_v_file_save(m: types.Message, state: FSMContext):
     uid = m.video.file_unique_id
     
     async with aiosqlite.connect(DB) as db:
-        # Дубликат тексеру
         exists = await (await db.execute("SELECT id FROM content WHERE file_unique_id=?", (uid,))).fetchone()
         if exists:
             await state.update_data(dupes=data.get('dupes', 0) + 1)
@@ -208,7 +234,6 @@ async def user_up_file(m: types.Message, state: FSMContext):
     uid = m.video.file_unique_id
     
     async with aiosqlite.connect(DB) as db:
-        # Базада немесе кезекте бар-жоғын тексеру
         c1 = await (await db.execute("SELECT id FROM content WHERE file_unique_id=?", (uid,))).fetchone()
         c2 = await (await db.execute("SELECT id FROM submissions WHERE file_unique_id=?", (uid,))).fetchone()
         
@@ -265,7 +290,7 @@ async def sub_decision(c: types.CallbackQuery):
     await c.message.delete()
     await c.answer("Орындалды")
 
-# --- ADMIN: BROADCAST (ANTI-BAN) ---
+# --- ADMIN: BROADCAST ---
 @dp.message_handler(lambda m: m.text == "📢 Рассылка", user_id=ADMIN_ID)
 async def adm_broadcast_start(m: types.Message):
     await AdminStates.broadcast_msg.set()
@@ -282,15 +307,12 @@ async def adm_broadcast_process(m: types.Message, state: FSMContext):
         try:
             await m.copy_to(u[0])
             count += 1
-            await asyncio.sleep(0.05) # Лимиттен аспау үшін
+            await asyncio.sleep(0.05)
         except RetryAfter as e:
             await asyncio.sleep(e.timeout)
             try: await m.copy_to(u[0])
             except: pass
-        except (BotBlocked, UserDeactivated):
-            # Қалауыңызша мұнда блокқа салған адамдарды базадан өшіру логикасын қосуға болады
-            pass
-        except TelegramAPIError:
+        except (BotBlocked, UserDeactivated, TelegramAPIError):
             pass
             
     await m.answer(f"✅ Рассылка {count} адамға сәтті жетті.", reply_markup=main_kb(m.from_user.id))
@@ -354,8 +376,8 @@ async def vip_access(m: types.Message):
     
     if is_vip:
         kb = ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
-        kb.add("😈 VIP видео 😈", "🔙 Артқа")
-        await m.answer(f"😈 <b>VIP МӘЗІР</b>\n\nСіздің VIP рұқсатыңыз белсенді!\nМерзімі: {user[1]} дейін.\n\n"
+        kb.add("💎 VIP Контент", "🔙 Артқа")
+        await m.answer(f"💎 <b>VIP МӘЗІР</b>\n\nСіздің VIP рұқсатыңыз белсенді!\nМерзімі: {user[1]} дейін.\n\n"
                        f"Бұл бөлімдегі видеоларды көру: 22 монета.", reply_markup=kb)
     else:
         kb = InlineKeyboardMarkup().add(InlineKeyboardButton("🔐 VIP Рұқсат сатып алу (50 монета)", callback_data="buy_vip"))
@@ -363,9 +385,8 @@ async def vip_access(m: types.Message):
             "🔐 <b>VIP КОНТЕНТКЕ КІРУ</b>\n\n"
             "Ереже: VIP бөлімге кіру үшін <b>50 монета</b> төлейсіз. Рұқсат <b>24 сағатқа</b> беріледі.\n"
             "24 сағаттан соң рұқсат автоматты түрде жойылады.\n\n"
-            "😈 VIP ішіндегі видеолар құны: <b>22 монета</b>.\n\n"
-            "🇷🇺 Самые горячие видео только здесь! Доступ на 24 часа.\n"
-            "🇰🇿 Ең ыстық және эксклюзивті контенттер тек осында!"
+            "💎 VIP ішіндегі видеолар құны: <b>22 монета</b>.\n\n"
+            "Ең эксклюзивті контенттер тек осында!"
         )
         await m.answer(text, reply_markup=kb)
 
@@ -385,10 +406,9 @@ async def buy_vip_callback(c: types.CallbackQuery):
     await bot.send_message(uid, "✅ VIP рұқсат алынды! 24 сағатқа есік ашылды.", reply_markup=main_kb(uid))
 
 # --- CONTENT SHOW ---
-@dp.message_handler(lambda m: m.text in ["🎬 Контент", "😈 VIP видео 😈"])
+@dp.message_handler(lambda m: m.text in ["🎬 Контент", "💎 VIP Контент"])
 async def content_menu(m: types.Message):
-    if m.text == "😈 VIP видео 😈":
-        m.text = "😈 VIP Видео"
+    if m.text == "💎 VIP Контент":
         return await get_video(m)
         
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
@@ -428,11 +448,11 @@ async def get_video(m: types.Message):
             await db.execute("INSERT INTO history VALUES (?,?)", (uid, video[0]))
             await db.commit()
             
-            kb = InlineKeyboardMarkup().add(InlineKeyboardButton("Көру 😈 смотреть", callback_data="ignore"))
+            kb = InlineKeyboardMarkup().add(InlineKeyboardButton("Көру 👀", callback_data="ignore"))
             sent = await bot.send_video(uid, video[1], caption=f"💰 Көру құны: {config['price']} монета", reply_markup=kb)
             asyncio.create_task(auto_delete(uid, sent.message_id, 1800))
         else:
-            await m.answer("Бұл бөлімде видео жоқ.")
+            await m.answer("Бұл бөлімде әзірге видео жоқ.")
 
 async def auto_delete(chat_id, msg_id, sec):
     await asyncio.sleep(sec)
@@ -480,7 +500,7 @@ async def clean_chat(m: types.Message, state: FSMContext):
     curr_state = await state.get_state()
     if curr_state is not None: return
     
-    buttons = ["🎬 Контент", "➕ Видео жіберу", "💰 Баланс", "👥 Реферал", "💎 Монета сатып алу", "⚙️ Админ", "🔐 VIP контент", "🔙 Артқа", "😈 VIP видео 😈", "✅ Аяқтау"]
+    buttons = ["🎬 Контент", "➕ Видео жіберу", "💰 Баланс", "👥 Реферал", "💎 Монета сатып алу", "⚙️ Админ", "🔐 VIP контент", "🔙 Артқа", "💎 VIP Контент", "✅ Аяқтау"]
     if m.text not in buttons and not m.text.startswith('/'):
         try: await m.delete()
         except: pass
