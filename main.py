@@ -18,7 +18,7 @@ API_TOKEN = "8007564684:AAGzop3Z06kA6O-x5ljm4QFZy_LDNMvIk-U"
 ADMIN_ID = 6303091468
 CHANNEL_URL = "https://t.me/QZQCONTENT"
 CHANNEL_ID = "@QZQCONTENT"
-BOT_USER = "@@yumybarbot"
+BOT_USER = "@yumybarbot"
 DB = "enterprise.db"
 
 # Жанрлар және бағалар (Смайликтер алынды, стандартты атаулар қойылды)
