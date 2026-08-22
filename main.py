@@ -487,7 +487,7 @@ async def show_balance(m: types.Message):
 
 @dp.message_handler(lambda m: m.text == "💎 Монета сатып алу")
 async def buy_moneta_info(m: types.Message):
-    await m.answer("💎 Монета сатып алу үшін: @QzqMoneta")
+    await m.answer("💎 Монета сатып алу үшін: @QAZAQHAuyat)
 
 @dp.message_handler(lambda m: m.text == "👥 Реферал")
 async def ref_info(m: types.Message):
