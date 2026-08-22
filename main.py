@@ -14,19 +14,19 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeybo
 from aiogram.utils.exceptions import BotBlocked, UserDeactivated, RetryAfter, TelegramAPIError
 
 # --- CONFIG ---
-API_TOKEN = "5973940534:AAGpT1eBaBuRImuSjpXdz2M-BnWn7Inn6Lk"
+API_TOKEN = "8007564684:AAGzop3Z06kA6O-x5ljm4QFZy_LDNMvIk-U"
 ADMIN_ID = 6303091468
 CHANNEL_URL = "https://t.me/QZQCONTENT"
 CHANNEL_ID = "@QZQCONTENT"
-BOT_USER = "@Yummybarbot"
+BOT_USER = "@@yumybarbot"
 DB = "enterprise.db"
 
 # Жанрлар және бағалар (Смайликтер алынды, стандартты атаулар қойылды)
 GENRES_CONFIG = {
-    "🎬 Қазақша кинолар": {"price": 5},
-    "🎬 Орысша кинолар": {"price": 4},
-    "🧸 Балаларға арналған": {"price": 6},
-    "🎬 Шетелдік кинолар": {"price": 3},
+    "🎬 Қазақша": {"price": 5},
+    "🎬 Орысша": {"price": 4},
+    "🧸 Балаларға": {"price": 6},
+    "🎬 Шетелдік": {"price": 3},
     "💎 VIP Контент": {"price": 22}
 }
 GENRES = list(GENRES_CONFIG.keys())
